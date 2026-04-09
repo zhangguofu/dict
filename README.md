@@ -1,6 +1,6 @@
 # 通用字典模块
 
-C语言通用键值对存储库，支持 PC 和 RT-Thread 平台。
+C语言通用字典模块，支持任意数据类型的键值对存取。
 
 ## 1. 特性
 
@@ -100,20 +100,54 @@ docs/
 └── api.md              # API 参考
 ```
 
-## 5. 文档
+## 5. 使用示例（斐波那契数列）
 
-| 文档 | 说明 |
-|------|------|
-| [requirements.md](docs/requirements.md) | 需求规格 |
-| [design.md](docs/design.md) | 设计文档 |
-| [api.md](docs/api.md) | API 参考 |
-| [iterator.md](docs/iterator.md) | 迭代器设计 |
-| [CHANGELOG.md](CHANGELOG.md) | 版本历史 |
+```c
 
-## 6. 性能基准
+#include "dict.h"
 
-| 操作 | STRING | NUMBER(int32) | 加速比 |
-|------|--------|---------------|--------|
-| Insert | 0.53 μs | 0.33 μs | **1.6x** |
-| Lookup | 0.18 μs | 0.05 μs | **3.6x** |
-| Delete | 0.31 μs | 0.10 μs | **3.1x** |
+
+static dict_handle_t fib_get_cache(void)
+{
+    static dict_handle_t fib_cache = NULL;
+    if (NULL == fib_cache) {
+        dict_config_t config = {
+            .capacity = 128,
+            .key_type = DICT_KEY_NUMBER,
+            .key_size = sizeof(int)
+        };
+        fib_cache = dict_create(&config);
+    }
+
+    return fib_cache;
+}
+
+uint64_t fib_memoized(int n) {
+
+    if (n <= 1) {
+        return n;
+    }
+
+    uint64_t value = 0;
+    dict_handle_t cache = fib_get_cache();
+    if (DICT_OK == dict_get(cache, &n, &value, sizeof(value))) {
+        return value;
+    }
+
+    value = fib_memoized(n - 1) + fib_memoized(n - 2);
+    dict_set(cache, key, &value, sizeof(value));
+    return value;
+}
+
+int main(void)
+{
+    int test_cases[] = {20, 25, 30, 40, 50, 60, 90};
+    size_t test_count = sizeof(test_cases) / sizeof(test_cases[0]);
+
+    for (size_t i = 0; i < test_count; i++) {
+        uint64_t value = fib_memoized(test_cases[i]);
+        printf("Fib(%d) = %llu\n", test_cases[i], value);
+    }
+}
+
+```
