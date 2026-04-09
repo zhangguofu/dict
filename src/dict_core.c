@@ -1,6 +1,28 @@
 /**
  * @file dict_core.c
  * @brief Dictionary core implementation
+ *
+ * @copyright Copyright (c) 2020-2026 Gary Zhang [cleancode@163.com]
+ *
+ * @license The MIT License (MIT)
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining
+ * a copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation the
+ * rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ * The above copyright notice and this permission notice shall be included in all
+ *  copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ *
  */
 #include "dict_core.h"
 #include "dict_hash.h"
@@ -699,20 +721,20 @@ int dict_iter_get(dict_iter_t iter,
     return DICT_OK;
 }
 
-void dict_iter_next(dict_iter_t iter)
+int dict_iter_next(dict_iter_t iter)
 {
     dict_iter_impl_t *it;
     dict_node_t *node;
 
     if (!iter) {
-        return;
+        return DICT_EINVALID;
     }
 
     it = (dict_iter_impl_t *)iter;
 
     /* Current position invalid, return directly */
     if (!it->node) {
-        return;
+        return DICT_ENOTFOUND;
     }
 
     node = (dict_node_t *)it->node;
@@ -720,7 +742,7 @@ void dict_iter_next(dict_iter_t iter)
     /* Linked list in same bucket has successor */
     if (node->next) {
         it->node = node->next;
-        return;
+        return DICT_OK;
     }
 
     /* Current bucket linked list finished, find next non-empty bucket */
@@ -728,17 +750,20 @@ void dict_iter_next(dict_iter_t iter)
         if (it->dict->buckets[i] != NULL) {
             it->bucket_idx = i;
             it->node = it->dict->buckets[i];
-            return;
+            return DICT_OK;
         }
     }
 
     /* No more elements */
     it->node = NULL;
+    return DICT_ENOTFOUND;
 }
 
-void dict_iter_destroy(dict_iter_t iter)
+int dict_iter_destroy(dict_iter_t iter)
 {
-    if (iter) {
-        DICT_FREE(iter);
+    if (!iter) {
+        return DICT_EINVALID;
     }
+    DICT_FREE(iter);
+    return DICT_OK;
 }

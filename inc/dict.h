@@ -4,6 +4,28 @@
  *
  * Supports arbitrary data type storage with copy mode, dictionary manages memory automatically.
  * Dual platform support: designed for RT-Thread, code also runs on PC.
+ *
+ * @copyright Copyright (c) 2020-2026 Gary Zhang [cleancode@163.com]
+ *
+ * @license The MIT License (MIT)
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining
+ * a copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation the
+ * rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ * The above copyright notice and this permission notice shall be included in all
+ *  copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ *
  */
 #ifndef __DICT_H__
 #define __DICT_H__
@@ -110,7 +132,7 @@ typedef struct {
 /**
  * @brief Create a dictionary
  * @param config Configuration parameters, uses default when NULL
- * @return Dictionary handle, returns NULL on failure
+ * @return Returns the dictionary handle on success, NULL otherwise
  */
 dict_handle_t dict_create(const dict_config_t *config);
 
@@ -122,7 +144,7 @@ dict_handle_t dict_create(const dict_config_t *config);
  * @param key Key pointer (type determined by key_type at creation)
  * @param value Value pointer
  * @param value_len Value length in bytes
- * @return DICT_OK on success, other on failure
+ * @return Returns DICT_OK (0) on success, error code (<0) otherwise
  */
 int dict_set(dict_handle_t handle, const void *key, const void *value, size_t value_len);
 
@@ -132,7 +154,7 @@ int dict_set(dict_handle_t handle, const void *key, const void *value, size_t va
  * @param key Key pointer
  * @param value_out Value output buffer
  * @param buf_len Buffer size
- * @return DICT_OK on success, DICT_ENOTFOUND if key not found, DICT_ETOOSMALL if buffer too small
+ * @return Returns DICT_OK (0) on success, error code (<0) otherwise
  */
 int dict_get(dict_handle_t handle, const void *key, void *value_out, size_t buf_len);
 
@@ -141,7 +163,7 @@ int dict_get(dict_handle_t handle, const void *key, void *value_out, size_t buf_
  * @param handle Dictionary handle
  * @param key Key pointer
  * @param size_out Size output pointer
- * @return DICT_OK on success, DICT_ENOTFOUND if key not found
+ * @return Returns DICT_OK (0) on success, error code (<0) otherwise
  */
 int dict_get_size(dict_handle_t handle, const void *key, size_t *size_out);
 
@@ -149,7 +171,7 @@ int dict_get_size(dict_handle_t handle, const void *key, size_t *size_out);
  * @brief Delete key-value pair
  * @param handle Dictionary handle
  * @param key Key pointer
- * @return DICT_OK on success, DICT_ENOTFOUND if key not found
+ * @return Returns DICT_OK (0) on success, error code (<0) otherwise
  */
 int dict_delete(dict_handle_t handle, const void *key);
 
@@ -163,7 +185,7 @@ size_t dict_size(dict_handle_t handle);
 /**
  * @brief Clear all key-value pairs
  * @param handle Dictionary handle
- * @return DICT_OK on success
+ * @return Returns DICT_OK (0) on success
  */
 int dict_clear(dict_handle_t handle);
 
@@ -175,7 +197,7 @@ int dict_clear(dict_handle_t handle);
  *
  * @note If utilization is above 25%, this function does nothing
  * @param handle Dictionary handle
- * @return DICT_OK on success, DICT_EINVALID for invalid parameter, DICT_ENOMEM on memory allocation failure
+ * @return Returns DICT_OK (0) on success, error code (<0) otherwise
  */
 int dict_shrink(dict_handle_t handle);
 
@@ -197,7 +219,7 @@ size_t dict_capacity(dict_handle_t handle);
 /**
  * @brief Create iterator
  * @param handle Dictionary handle
- * @return Iterator handle, returns NULL on failure
+ * @return Returns the iterator handle on success, NULL otherwise
  *
  * @note After creation, iterator points to first element (if dictionary is not empty)
  */
@@ -211,7 +233,7 @@ dict_iter_t dict_iter_create(dict_handle_t handle);
  * @param klen_out Key length output (can be NULL)
  * @param value_out Value output buffer (can be NULL)
  * @param vlen_out Value length output (can be NULL)
- * @return DICT_OK on success (current position valid), DICT_ENOTFOUND if traversal complete, DICT_EINVALID for invalid parameter
+ * @return Returns DICT_OK (0) on success, error code (<0) otherwise
  */
 int dict_iter_get(dict_iter_t iter,
                   void *key_out, size_t *klen_out,
@@ -223,21 +245,23 @@ int dict_iter_get(dict_iter_t iter,
  * Only updates iterator position, does not return data
  *
  * @param iter Iterator handle
+ * @return Returns DICT_OK (0) on success, error code (<0) otherwise
  */
-void dict_iter_next(dict_iter_t iter);
+int dict_iter_next(dict_iter_t iter);
 
 /**
  * @brief Destroy iterator
  * @param iter Iterator handle
+ * @return Returns DICT_OK (0) on success, error code (<0) otherwise
  *
  * @note Must destroy all associated iterators before destroying dictionary
  */
-void dict_iter_destroy(dict_iter_t iter);
+int dict_iter_destroy(dict_iter_t iter);
 
 /**
  * @brief Destroy dictionary, free all memory
  * @param handle Dictionary handle
- * @return DICT_OK on success, other on failure
+ * @return Returns DICT_OK (0) on success, error code (<0) otherwise
  */
 int dict_destroy(dict_handle_t handle);
 

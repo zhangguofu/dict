@@ -62,3 +62,6 @@ docs/
 
 # macOS system files
 .DS_Store
+
+# SCons
+*/.sconsign.dblite
