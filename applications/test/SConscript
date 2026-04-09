@@ -1,0 +1,52 @@
+# -*- coding: utf-8 -*-
+"""
+SConscript for dict test
+"""
+
+Import('env')
+
+# 获取目录
+cwd = Dir('.')  # applications/test
+app_dir = Dir('..')  # applications
+pkg_dir = app_dir.Dir('..')  # 项目根目录 (dict/)
+
+# 克隆环境
+test_env = env.Clone()
+
+# 设置构建目录（统一到 applications/build/）
+build_obj_dir = app_dir.Dir('build/obj/test')
+VariantDir(build_obj_dir, cwd, duplicate=0)
+
+# 添加包含路径
+test_env.Append(CPPPATH = [
+    pkg_dir.Dir('inc'),
+    pkg_dir.Dir('src'),
+])
+
+# 获取库
+Import('lib')
+test_env.Append(LIBS = [lib])
+test_env.Append(LIBS = ['pthread', 'gtest'])
+
+# 源文件
+src = ['main.cpp', 'dict_test.cpp', 'hash_test.cpp']
+src_in_build = [build_obj_dir.File(f) for f in src]
+
+# 构建
+test_program = test_env.Program(app_dir.File('build/bin/dict_test'), src_in_build)
+
+# ============================================
+# 基准测试
+# ============================================
+bench_env = env.Clone()
+bench_env.Append(CPPPATH = [
+    pkg_dir.Dir('inc'),
+    pkg_dir.Dir('src'),
+])
+bench_env.Append(LIBS = [lib])
+bench_env.Append(LIBS = ['pthread'])
+
+bench_src_in_build = [build_obj_dir.File('dict_benchmark.cpp')]
+bench_program = bench_env.Program(app_dir.File('build/bin/dict_benchmark'), bench_src_in_build)
+
+Return(['test_program', 'bench_program'])

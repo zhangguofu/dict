@@ -71,6 +71,9 @@ dict_destroy(dict);
 ## 3. 构建与测试
 
 ```bash
+# 进入应用目录
+cd applications
+
 # 清理并编译（默认启用 ASAN 内存泄漏检测）
 scons -c && scons
 
@@ -80,27 +83,40 @@ scons -c && scons
 # 运行基准测试
 ./build/bin/dict_benchmark
 
+# 运行示例程序
+./build/bin/fibonacci
 ```
 
 ## 4. 项目结构
 
 ```
-dict/
+├── SConscript           # RT-Thread 软件包构建配置
 ├── inc/
 │   └── dict.h          # 公共API + 平台抽象
-└── src/
-    ├── dict_core.c     # 核心实现
-    ├── dict_core.h     # 内部数据结构
-    ├── dict_hash.c     # 哈希算法
-    └── dict_hash.h     # 哈希算法内部头文件
-
-docs/
-├── requirements.md     # 需求规格
-├── design.md           # 设计文档（包含迭代器设计）
-└── api.md              # API 参考
+├── src/
+│   ├── dict_core.c     # 核心实现
+│   ├── dict_core.h     # 内部数据结构
+│   ├── dict_hash.c     # 哈希算法
+│   └── dict_hash.h     # 哈希算法内部头文件
+├── applications/       # PC 端测试与示例（独立构建）
+│   ├── SConstruct      # 构建入口
+│   ├── test/           # 单元测试
+│   └── examples/        # 使用示例
+├── docs/
+│   ├── requirements.md # 需求规格
+│   ├── design.md       # 设计文档
+│   └── api.md          # API 参考
+└── README.md
 ```
 
-## 5. 使用示例（斐波那契数列）
+## 5. RT-Thread 集成
+
+本模块可作为 RT-Thread 软件包使用。集成到 RT-Thread 项目时：
+
+1. 在 RT-Thread Studio 或使用 `menuconfig` 启用 `dict` 软件包
+2. 软件包会自动编译，无需额外配置
+
+## 6. 使用示例（斐波那契数列）
 
 ```c
 

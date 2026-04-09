@@ -1,0 +1,31 @@
+# -*- coding: utf-8 -*-
+"""
+SConscript for dict core library
+"""
+
+Import('env')
+
+# 获取目录
+cwd = Dir('.')  # src
+app_dir = cwd.Dir('../applications')  # applications
+pkg_dir = app_dir.Dir('..')  # 项目根目录 (dict/)
+
+# 设置构建目录
+build_obj_dir = app_dir.Dir('build/obj/dict')
+VariantDir(build_obj_dir, cwd, duplicate=0)
+
+# 源文件
+src = [
+    build_obj_dir.File('dict_hash.c'),
+    build_obj_dir.File('dict_core.c'),
+]
+
+# 克隆环境
+lib_env = env.Clone()
+lib_env.Append(CPPPATH = [pkg_dir.Dir('inc')])
+
+# 创建库
+lib = lib_env.Library(app_dir.File('build/lib/dict'), src)
+lib_path = app_dir.Dir('build/lib')
+
+Return('lib', 'lib_path')

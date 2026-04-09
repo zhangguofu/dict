@@ -5,13 +5,14 @@ SConstruct for dict project
 
 import os
 
-# 项目根目录
+# 项目根目录（回退到父目录）
 root_dir = Dir('.')
+src_root  = root_dir.Dir('../')
 
 # 设置编译环境
 env = Environment(
     CPPPATH = [
-        root_dir.Dir('dict/inc'),
+        src_root.Dir('inc'),
     ],
 )
 
@@ -46,8 +47,8 @@ print("=" * 50)
 print("Building dict library and tests...")
 print("=" * 50)
 
-# 先构建核心库
-lib, lib_path = SConscript('dict/SConscript')
+# 先构建核心库（构建输出到 applications/build/）
+lib, lib_path = SConscript(src_root.File('src/SConscript'))
 
 # 导出库对象供其他模块使用
 Export('lib', 'lib_path')
@@ -67,3 +68,11 @@ Default([test_prog, example_prog])
 
 # 清理目标
 Clean('.', 'build')
+
+# 检查是否为清理模式，如果是则删除整个 build 目录
+import sys
+import shutil
+if '-c' in sys.argv or '--clean' in sys.argv:
+    if os.path.exists('build'):
+        shutil.rmtree('build')
+        print("Removed build directory")
