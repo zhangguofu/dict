@@ -102,10 +102,6 @@ scons -c && scons
 │   ├── SConstruct      # 构建入口
 │   ├── test/           # 单元测试
 │   └── examples/        # 使用示例
-├── docs/
-│   ├── requirements.md # 需求规格
-│   ├── design.md       # 设计文档
-│   └── api.md          # API 参考
 └── README.md
 ```
 
