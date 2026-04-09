@@ -439,8 +439,7 @@ int dict_set(dict_handle_t handle, const void *key, const void *value, size_t va
         if (d->size >= d->threshold) {
             int ret = dict_resize_to(d, d->capacity * 2);
             if (ret != DICT_OK) {
-                /* Resize failed, but data is already inserted, continue using */
-                DICT_LOG("dict_set: resize failed, ret=%d\n", ret);
+                return ret;
             }
         }
     }

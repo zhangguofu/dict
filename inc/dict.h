@@ -33,6 +33,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -48,12 +49,6 @@ extern "C" {
     #define DICT_FREE(ptr)        rt_free(ptr)
     #define DICT_STRCMP(a, b)     rt_strcmp(a, b)
     #define DICT_STRLEN(str)      rt_strlen(str)
-
-    #ifdef DICT_DEBUG
-        #define DICT_LOG(...)    rt_kprintf(__VA_ARGS__)
-    #else
-        #define DICT_LOG(...)
-    #endif
 #else
     #include <stdio.h>
     #include <stdlib.h>
@@ -63,12 +58,6 @@ extern "C" {
     #define DICT_FREE(ptr)        free(ptr)
     #define DICT_STRCMP(a, b)     strcmp(a, b)
     #define DICT_STRLEN(str)      strlen(str)
-
-    #ifdef DICT_DEBUG
-        #define DICT_LOG(...)    printf(__VA_ARGS__)
-    #else
-        #define DICT_LOG(...)
-    #endif
 #endif
 
 /* ============================================
@@ -122,8 +111,10 @@ typedef struct {
     dict_hash_fn_t hash_fn;       /* Optional custom hash function, NULL uses default */
 } dict_config_t;
 
-/* Default configuration */
-#define DICT_DEFAULT_CAPACITY 32
+/* Default configuration (from rtconfig.h or fallback) */
+#ifndef DICT_DEFAULT_CAPACITY
+    #define DICT_DEFAULT_CAPACITY 32
+#endif
 
 /* ============================================
  * Interface Function Declarations
