@@ -122,7 +122,8 @@ static dict_handle_t fib_get_cache(void)
     return fib_cache;
 }
 
-uint64_t fib_memoized(int n) {
+uint64_t fib_memoized(int n)
+{
 
     if (n <= 1) {
         return n;
