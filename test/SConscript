@@ -1,0 +1,63 @@
+# -*- coding: utf-8 -*-
+"""
+SConscript for dict test
+"""
+
+Import('env')
+
+# 获取当前目录和项目根目录
+cwd = Dir('.')
+root = cwd.Dir('..')
+
+# 克隆环境
+test_env = env.Clone()
+
+# 设置构建目录（.o 文件输出到 build/obj/test/）
+build_obj_dir = root.Dir('build/obj/test')
+VariantDir(build_obj_dir, cwd, duplicate=0)
+
+# 添加包含路径（使用 Dir 对象获取正确的路径）
+test_env.Append(CPPPATH = [
+    Dir('dict/inc', root),
+    Dir('dict/src', root),
+])
+
+# 获取库对象（从 SConstruct 返回）
+Import('lib')
+test_env.Append(LIBS = [lib])
+
+# 添加 pthread 和 gtest
+test_env.Append(LIBS = ['pthread', 'gtest'])
+
+# 源文件列表
+src = [
+    'main.cpp',
+    'dict_test.cpp',
+    'hash_test.cpp',
+]
+
+# 使用 build_obj_dir 中的路径
+src_in_build = [build_obj_dir.File(f) for f in src]
+
+# 构建测试程序
+test_program = test_env.Program(root.File('build/bin/dict_test'), src_in_build)
+
+# ============================================
+# 基准测试程序（不需要 Google Test）
+# ============================================
+
+# 克隆环境用于基准测试
+bench_env = env.Clone()
+bench_env.Append(CPPPATH = [
+    Dir('dict/inc', root),
+    Dir('dict/src', root),
+])
+bench_env.Append(LIBS = [lib])
+bench_env.Append(LIBS = ['pthread'])
+
+# 构建基准测试程序
+bench_src_in_build = [build_obj_dir.File('dict_benchmark.cpp')]
+bench_program = bench_env.Program(root.File('build/bin/dict_benchmark'), bench_src_in_build)
+
+# 返回测试程序
+Return(['test_program', 'bench_program'])

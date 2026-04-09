@@ -1,0 +1,41 @@
+# -*- coding: utf-8 -*-
+"""
+SConscript for dict examples
+"""
+
+Import('env')
+
+# 获取当前目录和项目根目录
+cwd = Dir('.')
+root = cwd.Dir('..')
+
+# 克隆环境
+example_env = env.Clone()
+
+# 设置构建目录
+build_obj_dir = root.Dir('build/obj/example')
+VariantDir(build_obj_dir, cwd, duplicate=0)
+
+# 添加包含路径
+example_env.Append(CPPPATH = [root.Dir('dict/inc')])
+
+# 获取库对象和库路径
+Import('lib')
+Import('lib_path')
+example_env.Append(LIBS = [lib])
+example_env.Append(LIBPATH = [lib_path])
+
+# 源文件列表
+src = [
+    'fibonacci.c',
+]
+
+# 构建示例程序
+example_programs = []
+for f in src:
+    name = f.replace('.c', '')
+    prog = example_env.Program(root.File('build/bin/' + name), build_obj_dir.File(f))
+    example_programs.append(prog)
+
+# 返回
+Return('example_programs')
