@@ -127,6 +127,7 @@ static dict_node_t *dict_node_create(dict_t *d, const void *key, const void *val
     void *ptr;
 
     key_len = dict_get_key_len(d, key);
+
     total_size = DICT_NODE_SIZE(key_len, value_len);
 
     /* Allocate node */
@@ -315,6 +316,10 @@ dict_handle_t dict_create(const dict_config_t *config)
         if (config->key_type != DICT_KEY_STRING && config->key_size == 0) {
             return NULL;
         }
+        /* Check key_size limit for NUMBER/BINARY types */
+        if (config->key_type != DICT_KEY_STRING && config->key_size > DICT_MAX_LENGTH) {
+            return NULL;
+        }
         /* Get capacity */
         if (config->capacity > 0) {
             capacity = config->capacity;
@@ -374,12 +379,19 @@ int dict_set(dict_handle_t handle, const void *key, const void *value, size_t va
     dict_node_t *node;
     uint32_t hash;
     size_t idx;
+    size_t key_len;
 
     if (!handle || !key) {
         return DICT_EINVALID;
     }
 
     d = (dict_t *)handle;
+
+    /* Get key length and check limits */
+    key_len = dict_get_key_len(d, key);
+    if (key_len > DICT_MAX_LENGTH || value_len > DICT_MAX_LENGTH) {
+        return DICT_ETOOLARGE;
+    }
 
     /* Check if key already exists */
     node = dict_find_node(d, key);

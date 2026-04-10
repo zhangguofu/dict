@@ -69,6 +69,10 @@ extern "C" {
 #define DICT_ENOMEM     -2   /* Memory allocation failed */
 #define DICT_ENOTFOUND  -3   /* Key not found */
 #define DICT_ETOOSMALL  -4   /* Buffer too small */
+#define DICT_ETOOLARGE  -5   /* Key or value length too large (exceeds DICT_MAX_LENGTH bytes) */
+
+/* Maximum length for keys and values (limited by uint16_t storage) */
+#define DICT_MAX_LENGTH    UINT16_MAX   /* 65535 */
 
 /* ============================================
  * Type Definitions
