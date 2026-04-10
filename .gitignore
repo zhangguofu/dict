@@ -64,4 +64,4 @@ docs/
 .DS_Store
 
 # SCons
-*/.sconsign.dblite
+.sconsign.dblite
