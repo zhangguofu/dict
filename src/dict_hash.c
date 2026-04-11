@@ -49,7 +49,7 @@
 static inline uint32_t GETBLOCK32(const uint8_t *p, size_t i)
 {
     uint32_t val;
-    memcpy(&val, p + i * 4, sizeof(val));
+    DICT_HASH_MEMCPY(&val, p + i * 4, sizeof(val));
     return val;
 }
 

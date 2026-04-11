@@ -33,8 +33,20 @@
  * Convenience Macros
  * ============================================ */
 
+#ifndef DICT_DEFAULT_CAPACITY
+#define DICT_DEFAULT_CAPACITY 32
+#endif
+
+/* Load factor: DICT_LOAD_FACTOR_X100 / 100.0 */
+#ifndef DICT_LOAD_FACTOR_X100
+    #define DICT_LOAD_FACTOR_X100 75
+#endif
+#define DICT_LOAD_FACTOR (((float)DICT_LOAD_FACTOR_X100) / 100.0f)
+
+
 #define DICT_HASH(d, key) (dict_do_hash((d), (key)))
 #define DICT_COMPARE(d, k1, k2) (dict_do_compare((d), (k1), (k2)))
+
 
 /* ============================================
  * Internal Function Declarations
@@ -111,7 +123,7 @@ int dict_do_compare(const dict_t *d, const void *k1, const void *k2)
         case DICT_KEY_NUMBER:
         case DICT_KEY_BINARY:
         default:
-            return memcmp(k1, k2, d->key_size);
+            return DICT_MEMCMP(k1, k2, d->key_size);
     }
 }
 
@@ -121,17 +133,11 @@ int dict_do_compare(const dict_t *d, const void *k1, const void *k2)
 
 static dict_node_t *dict_node_create(dict_t *d, const void *key, const void *value, size_t value_len)
 {
-    size_t key_len;
-    size_t total_size;
-    dict_node_t *node;
-    void *ptr;
-
-    key_len = dict_get_key_len(d, key);
-
-    total_size = DICT_NODE_SIZE(key_len, value_len);
+    size_t key_len = dict_get_key_len(d, key);
+    size_t total_size = DICT_NODE_SIZE(key_len, value_len);
 
     /* Allocate node */
-    node = (dict_node_t *)DICT_MALLOC(total_size);
+    dict_node_t *node = (dict_node_t *)DICT_MALLOC(total_size);
     if (!node) {
         return NULL;
     }
@@ -142,8 +148,8 @@ static dict_node_t *dict_node_create(dict_t *d, const void *key, const void *val
     node->value_len = (uint16_t)value_len;
 
     /* Copy key data */
-    ptr = DICT_NODE_KEY(node);
-    memcpy(ptr, key, key_len);
+    void *ptr = DICT_NODE_KEY(node);
+    DICT_MEMCPY(ptr, key, key_len);
 
     /* STRING type needs '\0' terminator */
     if (d->key_type == DICT_KEY_STRING) {
@@ -153,7 +159,7 @@ static dict_node_t *dict_node_create(dict_t *d, const void *key, const void *val
     /* Copy value data */
     if (value && value_len > 0) {
         void *value_ptr = DICT_NODE_VALUE(node);
-        memcpy(value_ptr, value, value_len);
+        DICT_MEMCPY(value_ptr, value, value_len);
     }
 
     return node;
@@ -168,15 +174,11 @@ static void dict_node_destroy(dict_node_t *node)
 
 static dict_node_t *dict_find_node(dict_t *d, const void *key)
 {
-    uint32_t hash;
-    size_t idx;
-    dict_node_t *node;
-
-    hash = DICT_HASH(d, key);
-    idx = hash & (d->capacity - 1);
+    uint32_t hash = DICT_HASH(d, key);
+    size_t idx = hash & (d->capacity - 1);
 
     /* Traverse linked list to find */
-    for (node = d->buckets[idx]; node != NULL; node = node->next) {
+    for (dict_node_t *node = d->buckets[idx]; node != NULL; node = node->next) {
         if (DICT_COMPARE(d, DICT_NODE_KEY(node), key) == 0) {
             return node;
         }
@@ -187,13 +189,6 @@ static dict_node_t *dict_find_node(dict_t *d, const void *key)
 
 static int dict_resize_to(dict_t *d, size_t new_capacity)
 {
-    dict_node_t **old_buckets;
-    size_t old_capacity;
-    size_t i;
-    dict_node_t *node;
-    dict_node_t *next;
-    size_t idx;
-
     /* Cannot shrink below minimum capacity */
     if (new_capacity < DICT_DEFAULT_CAPACITY) {
         new_capacity = DICT_DEFAULT_CAPACITY;
@@ -213,8 +208,8 @@ static int dict_resize_to(dict_t *d, size_t new_capacity)
         return DICT_OK;
     }
 
-    old_buckets = d->buckets;
-    old_capacity = d->capacity;
+    dict_node_t **old_buckets = d->buckets;
+    size_t old_capacity = d->capacity;
 
     /* Allocate new bucket array */
     d->buckets = (dict_node_t **)DICT_MALLOC(new_capacity * sizeof(dict_node_t *));
@@ -224,19 +219,19 @@ static int dict_resize_to(dict_t *d, size_t new_capacity)
     }
 
     /* Initialize new bucket array */
-    for (i = 0; i < new_capacity; i++) {
+    for (size_t i = 0; i < new_capacity; i++) {
         d->buckets[i] = NULL;
     }
 
     /* Rehash all nodes */
-    for (i = 0; i < old_capacity; i++) {
-        node = old_buckets[i];
+    for (size_t i = 0; i < old_capacity; i++) {
+        dict_node_t *node = old_buckets[i];
         while (node) {
-            next = node->next;
+            dict_node_t *next = node->next;
 
             /* Recalculate bucket index */
             uint32_t hash = DICT_HASH(d, DICT_NODE_RAW_KEY(node));
-            idx = hash & (new_capacity - 1);
+            size_t idx = hash & (new_capacity - 1);
 
             /* Insert into new bucket */
             node->next = d->buckets[idx];
@@ -258,11 +253,8 @@ static int dict_resize_to(dict_t *d, size_t new_capacity)
 
 static dict_t *dict_create_internal(const dict_config_t *config, size_t capacity)
 {
-    dict_t *d;
-    size_t i;
-
     /* Allocate dictionary structure */
-    d = (dict_t *)DICT_MALLOC(sizeof(dict_t));
+    dict_t *d = (dict_t *)DICT_MALLOC(sizeof(dict_t));
     if (!d) {
         return NULL;
     }
@@ -275,7 +267,7 @@ static dict_t *dict_create_internal(const dict_config_t *config, size_t capacity
     }
 
     /* Initialize bucket array */
-    for (i = 0; i < capacity; i++) {
+    for (size_t i = 0; i < capacity; i++) {
         d->buckets[i] = NULL;
     }
 
@@ -345,17 +337,14 @@ dict_handle_t dict_create(const dict_config_t *config)
 
 int dict_destroy(dict_handle_t handle)
 {
-    dict_t *d;
-    size_t i;
-
     if (!handle) {
         return DICT_EINVALID;
     }
 
-    d = (dict_t *)handle;
+    dict_t *d = (dict_t *)handle;
 
     /* Free all nodes */
-    for (i = 0; i < d->capacity; i++) {
+    for (size_t i = 0; i < d->capacity; i++) {
         dict_node_t *node = d->buckets[i];
         while (node) {
             dict_node_t *next = node->next;
@@ -375,34 +364,27 @@ int dict_destroy(dict_handle_t handle)
 
 int dict_set(dict_handle_t handle, const void *key, const void *value, size_t value_len)
 {
-    dict_t *d;
-    dict_node_t *node;
-    uint32_t hash;
-    size_t idx;
-    size_t key_len;
-
     if (!handle || !key) {
         return DICT_EINVALID;
     }
 
-    d = (dict_t *)handle;
+    dict_t * d = (dict_t *)handle;
 
     /* Get key length and check limits */
-    key_len = dict_get_key_len(d, key);
+    size_t key_len = dict_get_key_len(d, key);
     if (key_len > DICT_MAX_LENGTH || value_len > DICT_MAX_LENGTH) {
         return DICT_ETOOLARGE;
     }
 
     /* Check if key already exists */
-    node = dict_find_node(d, key);
-
+    dict_node_t *node = dict_find_node(d, key);
     if (node) {
         /* Key exists: check if value size is the same */
         if (node->value_len == value_len) {
             /* Same size, directly overwrite value */
             void *value_ptr = DICT_NODE_VALUE(node);
             if (value && value_len > 0) {
-                memcpy(value_ptr, value, value_len);
+                DICT_MEMCPY(value_ptr, value, value_len);
             }
         } else {
             /* Different size, need to rebuild node */
@@ -437,8 +419,8 @@ int dict_set(dict_handle_t handle, const void *key, const void *value, size_t va
         }
 
         /* Calculate bucket index */
-        hash = DICT_HASH(d, key);
-        idx = hash & (d->capacity - 1);
+        uint32_t hash = DICT_HASH(d, key);
+        size_t idx = hash & (d->capacity - 1);
 
         /* Insert at head of linked list */
         node->next = d->buckets[idx];
@@ -489,7 +471,7 @@ int dict_get(dict_handle_t handle, const void *key, void *value_out, size_t buf_
     /* Copy value data */
     if (node->value_len > 0) {
         void *value_ptr = DICT_NODE_VALUE(node);
-        memcpy(value_out, value_ptr, node->value_len);
+        DICT_MEMCPY(value_out, value_ptr, node->value_len);
     }
 
     return DICT_OK;
@@ -519,25 +501,19 @@ int dict_get_size(dict_handle_t handle, const void *key, size_t *size_out)
 
 int dict_delete(dict_handle_t handle, const void *key)
 {
-    dict_t *d;
-    uint32_t hash;
-    size_t idx;
-    dict_node_t **prev_ptr;
-    dict_node_t *node;
-
     if (!handle || !key) {
         return DICT_EINVALID;
     }
 
-    d = (dict_t *)handle;
+    dict_t *d = (dict_t *)handle;
 
     /* Calculate bucket index */
-    hash = DICT_HASH(d, key);
-    idx = hash & (d->capacity - 1);
+    uint32_t hash = DICT_HASH(d, key);
+    size_t idx = hash & (d->capacity - 1);
 
     /* Traverse linked list to find */
-    prev_ptr = &d->buckets[idx];
-    node = d->buckets[idx];
+    dict_node_t **prev_ptr = &d->buckets[idx];
+    dict_node_t *node = d->buckets[idx];
 
     while (node) {
         if (DICT_COMPARE(d, DICT_NODE_KEY(node), key) == 0) {
@@ -569,17 +545,14 @@ size_t dict_size(dict_handle_t handle)
 
 int dict_clear(dict_handle_t handle)
 {
-    dict_t *d;
-    size_t i;
-
     if (!handle) {
         return DICT_EINVALID;
     }
 
-    d = (dict_t *)handle;
+    dict_t *d = (dict_t *)handle;
 
     /* Free all nodes */
-    for (i = 0; i < d->capacity; i++) {
+    for (size_t i = 0; i < d->capacity; i++) {
         dict_node_t *node = d->buckets[i];
         while (node) {
             dict_node_t *next = node->next;
@@ -597,38 +570,34 @@ int dict_clear(dict_handle_t handle)
 
 int dict_shrink(dict_handle_t handle)
 {
-    dict_t *d;
-    size_t new_capacity;
-    double load_factor;
-
     if (!handle) {
         return DICT_EINVALID;
     }
 
-    d = (dict_t *)handle;
+    dict_t *d = (dict_t *)handle;
 
     /* Check if shrink is needed: only shrink when utilization is below 25% */
     if (d->size == 0) {
         /* Empty dictionary shrinks to default capacity */
+        return dict_resize_to(d, DICT_DEFAULT_CAPACITY);
+    }
+
+    double load_factor = (double)d->size / d->capacity;
+
+    /* Utilization above 25%, don't shrink */
+    if (load_factor > 0.25) {
+        return DICT_OK;
+    }
+
+    /* Calculate smallest 2^n capacity that just fits current elements */
+    size_t new_capacity = d->size;
+    while ((new_capacity & (new_capacity - 1)) != 0) {
+        new_capacity++;
+    }
+
+    /* Minimum capacity limit */
+    if (new_capacity < DICT_DEFAULT_CAPACITY) {
         new_capacity = DICT_DEFAULT_CAPACITY;
-    } else {
-        load_factor = (double)d->size / d->capacity;
-
-        /* Utilization above 25%, don't shrink */
-        if (load_factor > 0.25) {
-            return DICT_OK;
-        }
-
-        /* Calculate smallest 2^n capacity that just fits current elements */
-        new_capacity = d->size;
-        while ((new_capacity & (new_capacity - 1)) != 0) {
-            new_capacity++;
-        }
-
-        /* Minimum capacity limit */
-        if (new_capacity < DICT_DEFAULT_CAPACITY) {
-            new_capacity = DICT_DEFAULT_CAPACITY;
-        }
     }
 
     return dict_resize_to(d, new_capacity);
@@ -660,17 +629,14 @@ size_t dict_capacity(dict_handle_t handle)
 
 dict_iter_t dict_iter_create(dict_handle_t handle)
 {
-    dict_t *d;
-    dict_iter_impl_t *iter;
-
     if (!handle) {
         return NULL;
     }
 
-    d = (dict_t *)handle;
+    dict_t *d = (dict_t *)handle;
 
     /* Allocate iterator */
-    iter = (dict_iter_impl_t *)DICT_MALLOC(sizeof(dict_iter_impl_t));
+    dict_iter_impl_t *iter = (dict_iter_impl_t *)DICT_MALLOC(sizeof(dict_iter_impl_t));
     if (!iter) {
         return NULL;
     }
@@ -713,7 +679,7 @@ int dict_iter_get(dict_iter_t iter,
 
     /* Copy key data */
     if (key_out && klen_out) {
-        memcpy(key_out, DICT_NODE_RAW_KEY(node), node->key_len);
+        DICT_MEMCPY(key_out, DICT_NODE_RAW_KEY(node), node->key_len);
         /* STRING type needs '\0' terminator */
         if (it->dict->key_type == DICT_KEY_STRING) {
             ((char *)key_out)[node->key_len] = '\0';
@@ -723,7 +689,7 @@ int dict_iter_get(dict_iter_t iter,
 
     /* Copy value data */
     if (value_out && vlen_out) {
-        memcpy(value_out, DICT_NODE_VALUE(node), node->value_len);
+        DICT_MEMCPY(value_out, DICT_NODE_VALUE(node), node->value_len);
         *vlen_out = node->value_len;
     } else if (vlen_out) {
         *vlen_out = node->value_len;
@@ -746,21 +712,18 @@ int dict_iter_is_valid(dict_iter_t iter)
 
 int dict_iter_next(dict_iter_t iter)
 {
-    dict_iter_impl_t *it;
-    dict_node_t *node;
-
     if (!iter) {
         return DICT_EINVALID;
     }
 
-    it = (dict_iter_impl_t *)iter;
+    dict_iter_impl_t *it = (dict_iter_impl_t *)iter;
 
     /* Current position invalid, return directly */
     if (!it->node) {
         return DICT_ENOTFOUND;
     }
 
-    node = (dict_node_t *)it->node;
+    dict_node_t *node = (dict_node_t *)it->node;
 
     /* Linked list in same bucket has successor */
     if (node->next) {

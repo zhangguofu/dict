@@ -29,10 +29,14 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <string.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* Safe memcpy macro for hash operations (avoids ARM32 unaligned access issues) */
+#define DICT_HASH_MEMCPY(dst, src, n)   memcpy((dst), (src), (n))
 
 /**
  * @brief MurmurHash3 32-bit hash function (uses default seed 0xc28f5ec5)

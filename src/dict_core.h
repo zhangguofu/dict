@@ -31,16 +31,6 @@
 #include <stddef.h>
 #include "dict.h"
 
-/* Load factor: DICT_LOAD_FACTOR_X100 / 100.0 */
-#ifndef DICT_LOAD_FACTOR_X100
-    #define DICT_LOAD_FACTOR_X100 75
-#endif
-#define DICT_LOAD_FACTOR (((float)DICT_LOAD_FACTOR_X100) / 100.0f)
-
-/* Default initial capacity */
-#ifndef DICT_DEFAULT_CAPACITY
-    #define DICT_DEFAULT_CAPACITY 32
-#endif
 
 /**
  * @brief Linked list node - inline compact storage

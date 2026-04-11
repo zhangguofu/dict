@@ -49,6 +49,8 @@ extern "C" {
     #define DICT_FREE(ptr)        rt_free(ptr)
     #define DICT_STRCMP(a, b)     rt_strcmp(a, b)
     #define DICT_STRLEN(str)      rt_strlen(str)
+    #define DICT_MEMCPY(dst, src, n)   rt_memcpy(dst, src, n)
+    #define DICT_MEMCMP(s1, s2, n)    rt_memcmp(s1, s2, n)
 #else
     #include <stdio.h>
     #include <stdlib.h>
@@ -58,6 +60,8 @@ extern "C" {
     #define DICT_FREE(ptr)        free(ptr)
     #define DICT_STRCMP(a, b)     strcmp(a, b)
     #define DICT_STRLEN(str)      strlen(str)
+    #define DICT_MEMCPY(dst, src, n)   memcpy(dst, src, n)
+    #define DICT_MEMCMP(s1, s2, n)     memcmp(s1, s2, n)
 #endif
 
 /* ============================================
@@ -114,11 +118,6 @@ typedef struct {
     size_t key_size;              /* Key length for NUMBER/BINARY type, ignored for STRING */
     dict_hash_fn_t hash_fn;       /* Optional custom hash function, NULL uses default */
 } dict_config_t;
-
-/* Default configuration (from rtconfig.h or fallback) */
-#ifndef DICT_DEFAULT_CAPACITY
-    #define DICT_DEFAULT_CAPACITY 32
-#endif
 
 /* ============================================
  * Interface Function Declarations
