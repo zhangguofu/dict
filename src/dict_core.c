@@ -732,6 +732,18 @@ int dict_iter_get(dict_iter_t iter,
     return DICT_OK;
 }
 
+int dict_iter_is_valid(dict_iter_t iter)
+{
+    if (!iter) {
+        return 0;
+    }
+
+    dict_iter_impl_t *it = (dict_iter_impl_t *)iter;
+
+    /* Check if current node is valid (pointing to a valid element) */
+    return (it->node != NULL) ? 1 : 0;
+}
+
 int dict_iter_next(dict_iter_t iter)
 {
     dict_iter_impl_t *it;

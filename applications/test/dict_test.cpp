@@ -2289,9 +2289,10 @@ TEST_F(DictStringTest, IteratorLengthVerification)
     char value_buf[256];
     size_t klen, vlen;
     
-    while (dict_iter_get(iter, key_buf, &klen, value_buf, &vlen) == DICT_OK) {
+    while (dict_iter_is_valid(iter)) {
         /* Verify key length: dict_iter_get returns length WITHOUT null terminator for STRING keys */
         /* But it adds null terminator to the output buffer */
+        EXPECT_EQ(dict_iter_get(iter, key_buf, &klen, value_buf, &vlen), DICT_OK);
         size_t expected_klen = strlen(key_buf);
         EXPECT_EQ(klen, expected_klen);
         
@@ -2362,7 +2363,8 @@ TEST_F(DictStringTest, MixedLengthEntries)
     ASSERT_NE(iter, nullptr);
     
     int iter_count = 0;
-    while (dict_iter_get(iter, NULL, NULL, NULL, NULL) == DICT_OK) {
+    while (dict_iter_is_valid(iter)) {
+        EXPECT_EQ(dict_iter_get(iter, NULL, NULL, NULL, NULL), DICT_OK);
         iter_count++;
         dict_iter_next(iter);
     }
@@ -2488,12 +2490,199 @@ TEST(DictIteratorTest, EmptyDict)
     dict_iter_t iter = dict_iter_create(dict);
     ASSERT_NE(iter, nullptr);
 
-    /* 迭代器创建后指向第一个元素（但没有元素），get 返回未找到 */
-    char key[64];
-    size_t klen;
-    int value = 0;
-    size_t vlen;
-    EXPECT_EQ(dict_iter_get(iter, key, &klen, &value, &vlen), DICT_ENOTFOUND);
+    /* 迭代器创建后指向第一个元素（但没有元素），is_valid 返回 0 */
+    EXPECT_EQ(dict_iter_is_valid(iter), 0);
+
+    dict_iter_destroy(iter);
+    dict_destroy(dict);
+}
+
+/* ============================================
+ * IsValid Tests - 全面覆盖 dict_iter_is_valid
+ * ============================================ */
+
+/**
+ * @brief 测试 is_valid 在空字典上的行为
+ */
+TEST(DictIteratorTest, IsValid_EmptyDict)
+{
+    dict_handle_t dict = dict_create(NULL);
+    ASSERT_NE(dict, nullptr);
+
+    dict_iter_t iter = dict_iter_create(dict);
+    ASSERT_NE(iter, nullptr);
+
+    /* 空字典没有下一个元素 */
+    EXPECT_EQ(dict_iter_is_valid(iter), 0);
+
+    /* 尝试移动（无效操作） */
+    EXPECT_EQ(dict_iter_next(iter), DICT_ENOTFOUND);
+    EXPECT_EQ(dict_iter_is_valid(iter), 0);
+
+    dict_iter_destroy(iter);
+    dict_destroy(dict);
+}
+
+/**
+ * @brief 测试 is_valid 在单个元素上的行为
+ */
+TEST(DictIteratorTest, IsValid_SingleElement)
+{
+    dict_handle_t dict = dict_create(NULL);
+    ASSERT_NE(dict, nullptr);
+    ASSERT_EQ(dict_set(dict, "key", "value", 5), DICT_OK);
+
+    dict_iter_t iter = dict_iter_create(dict);
+    ASSERT_NE(iter, nullptr);
+
+    /* 第一个元素有效 */
+    EXPECT_EQ(dict_iter_is_valid(iter), 1);
+
+    /* 获取并移动到下一个 */
+    EXPECT_EQ(dict_iter_get(iter, NULL, NULL, NULL, NULL), DICT_OK);
+    EXPECT_EQ(dict_iter_next(iter), DICT_ENOTFOUND);
+
+    /* 遍历完成后，迭代器无效 */
+    EXPECT_EQ(dict_iter_is_valid(iter), 0);
+
+    dict_iter_destroy(iter);
+    dict_destroy(dict);
+}
+
+/**
+ * @brief 测试 is_valid 在多个元素（同一桶链表）上的行为
+ */
+TEST(DictIteratorTest, IsValid_SameBucketChain)
+{
+    dict_config_t config = {
+        .capacity = 4,  /* 小容量增加哈希冲突概率 */
+        .key_type = DICT_KEY_STRING,
+        .key_size = 0,
+        .hash_fn = NULL  /* 使用默认哈希 */
+    };
+    dict_handle_t dict = dict_create(&config);
+    ASSERT_NE(dict, nullptr);
+
+    /* 插入可能产生链表冲突的元素 */
+    ASSERT_EQ(dict_set(dict, "a", "1", 1), DICT_OK);
+    ASSERT_EQ(dict_set(dict, "b", "2", 1), DICT_OK);
+    ASSERT_EQ(dict_set(dict, "c", "3", 1), DICT_OK);
+
+    dict_iter_t iter = dict_iter_create(dict);
+    ASSERT_NE(iter, nullptr);
+
+    /* 验证 is_valid 行为 */
+    int count = 0;
+    while (dict_iter_is_valid(iter)) {
+        EXPECT_EQ(dict_iter_get(iter, NULL, NULL, NULL, NULL), DICT_OK);
+        count++;
+        dict_iter_next(iter);
+    }
+
+    EXPECT_EQ(count, 3);
+    EXPECT_EQ(dict_iter_is_valid(iter), 0);  /* 遍历完成后无效 */
+
+    dict_iter_destroy(iter);
+    dict_destroy(dict);
+}
+
+/**
+ * @brief 测试 is_valid 在多个元素（不同桶）上的行为
+ */
+TEST(DictIteratorTest, IsValid_DifferentBuckets)
+{
+    dict_handle_t dict = dict_create(NULL);
+    ASSERT_NE(dict, nullptr);
+
+    /* 插入元素，确保在不同桶中 */
+    for (int i = 0; i < 10; i++) {
+        char key[16];
+        snprintf(key, sizeof(key), "key%d", i);
+        ASSERT_EQ(dict_set(dict, key, &i, sizeof(i)), DICT_OK);
+    }
+
+    dict_iter_t iter = dict_iter_create(dict);
+    ASSERT_NE(iter, nullptr);
+
+    /* 验证 is_valid 正确检测每个元素 */
+    int count = 0;
+    while (dict_iter_is_valid(iter)) {
+        EXPECT_EQ(dict_iter_get(iter, NULL, NULL, NULL, NULL), DICT_OK);
+        count++;
+        dict_iter_next(iter);
+    }
+
+    EXPECT_EQ(count, 10);
+    EXPECT_EQ(dict_iter_is_valid(iter), 0);  /* 遍历完成后无效 */
+
+    dict_iter_destroy(iter);
+    dict_destroy(dict);
+}
+
+/**
+ * @brief 测试 is_valid 与 dict_iter_get 返回值的一致性
+ */
+TEST(DictIteratorTest, IsValid_ConsistencyWithGet)
+{
+    dict_handle_t dict = dict_create(NULL);
+    ASSERT_NE(dict, nullptr);
+
+    ASSERT_EQ(dict_set(dict, "k1", "v1", 3), DICT_OK);
+    ASSERT_EQ(dict_set(dict, "k2", "v2", 3), DICT_OK);
+
+    dict_iter_t iter = dict_iter_create(dict);
+    ASSERT_NE(iter, nullptr);
+
+    /* 验证 is_valid 和 dict_iter_get 返回值一致 */
+    while (dict_iter_is_valid(iter)) {
+        EXPECT_EQ(dict_iter_get(iter, NULL, NULL, NULL, NULL), DICT_OK);
+        dict_iter_next(iter);
+    }
+
+    /* 遍历完成后，两者都应该表示没有更多元素 */
+    EXPECT_EQ(dict_iter_get(iter, NULL, NULL, NULL, NULL), DICT_ENOTFOUND);
+
+    dict_iter_destroy(iter);
+    dict_destroy(dict);
+}
+
+/**
+ * @brief 测试 is_valid 在 NULL 迭代器上的行为
+ */
+TEST(DictIteratorTest, IsValid_NullIterator)
+{
+    /* NULL 迭代器应返回 0 */
+    EXPECT_EQ(dict_iter_is_valid(NULL), 0);
+}
+
+/**
+ * @brief 测试 is_valid 在多次 next 后的行为
+ */
+TEST(DictIteratorTest, IsValid_AfterMultipleNext)
+{
+    dict_handle_t dict = dict_create(NULL);
+    ASSERT_NE(dict, nullptr);
+
+    ASSERT_EQ(dict_set(dict, "k1", "v1", 3), DICT_OK);
+    ASSERT_EQ(dict_set(dict, "k2", "v2", 3), DICT_OK);
+    ASSERT_EQ(dict_set(dict, "k3", "v3", 3), DICT_OK);
+
+    dict_iter_t iter = dict_iter_create(dict);
+    ASSERT_NE(iter, nullptr);
+
+    /* 移动到第二个元素 */
+    ASSERT_EQ(dict_iter_next(iter), DICT_OK);
+    ASSERT_EQ(dict_iter_next(iter), DICT_OK);
+
+    /* 当前位置：第三个元素 */
+    int count = 0;
+    while (dict_iter_is_valid(iter)) {
+        EXPECT_EQ(dict_iter_get(iter, NULL, NULL, NULL, NULL), DICT_OK);
+        count++;
+        dict_iter_next(iter);
+    }
+
+    EXPECT_EQ(count, 1);  /* 只剩下一个元素 */
 
     dict_iter_destroy(iter);
     dict_destroy(dict);
@@ -2522,7 +2711,8 @@ TEST(DictIteratorTest, BasicTraversal)
     dict_iter_t iter = dict_iter_create(dict);
     ASSERT_NE(iter, nullptr);
 
-    while (dict_iter_get(iter, key, &klen, value, &vlen) == DICT_OK) {
+    while (dict_iter_is_valid(iter)) {
+        EXPECT_EQ(dict_iter_get(iter, key, &klen, value, &vlen), DICT_OK);
         count++;
         EXPECT_LE(klen, (size_t)63);
         EXPECT_LE(vlen, (size_t)63);
@@ -2564,7 +2754,8 @@ TEST(DictIteratorTest, AllElementsTraversed)
     dict_iter_t iter = dict_iter_create(dict);
     ASSERT_NE(iter, nullptr);
 
-    while (dict_iter_get(iter, key, &klen, NULL, NULL) == DICT_OK) {
+    while (dict_iter_is_valid(iter)) {
+        EXPECT_EQ(dict_iter_get(iter, key, &klen, NULL, NULL), DICT_OK);
         /* 解析键编号 */
         if (klen >= 4 && key[0] == 'k' && key[1] == 'e' && key[2] == 'y') {
             int idx = atoi(key + 3);
@@ -2601,8 +2792,10 @@ TEST(DictIteratorTest, NullOutputParams)
     ASSERT_NE(iter, nullptr);
 
     /* 测试各种 NULL 参数组合 */
+    EXPECT_EQ(dict_iter_is_valid(iter), 1);
     EXPECT_EQ(dict_iter_get(iter, NULL, NULL, NULL, NULL), DICT_OK);
     dict_iter_next(iter);  /* 移动到下一个 */
+    EXPECT_EQ(dict_iter_is_valid(iter), 0);
     EXPECT_EQ(dict_iter_get(iter, NULL, NULL, NULL, NULL), DICT_ENOTFOUND);
 
     dict_iter_destroy(iter);
@@ -2667,12 +2860,14 @@ TEST(DictIteratorTest, NestedIteration)
     ASSERT_NE(iter1, nullptr);
     ASSERT_NE(iter2, nullptr);
 
-    while (dict_iter_get(iter1, NULL, NULL, NULL, NULL) == DICT_OK) {
+    while (dict_iter_is_valid(iter1)) {
+        EXPECT_EQ(dict_iter_get(iter1, NULL, NULL, NULL, NULL), DICT_OK);
         count1++;
         dict_iter_next(iter1);
     }
 
-    while (dict_iter_get(iter2, NULL, NULL, NULL, NULL) == DICT_OK) {
+    while (dict_iter_is_valid(iter2)) {
+        EXPECT_EQ(dict_iter_get(iter2, NULL, NULL, NULL, NULL), DICT_OK);
         count2++;
         dict_iter_next(iter2);
     }
@@ -2709,7 +2904,8 @@ TEST(DictIteratorTest, ConditionDelete)
     dict_iter_t iter = dict_iter_create(dict);
     ASSERT_NE(iter, nullptr);
 
-    while (dict_iter_get(iter, key, &klen, &value, &vlen) == DICT_OK) {
+    while (dict_iter_is_valid(iter)) {
+        EXPECT_EQ(dict_iter_get(iter, key, &klen, &value, &vlen), DICT_OK);
         if (vlen == sizeof(int) && value < 0) {
             dict_delete(dict, key);
             /* 删除后需要重新开始迭代 */
@@ -2753,7 +2949,8 @@ TEST(DictIteratorTest, NumberKeyType)
     dict_iter_t iter = dict_iter_create(dict);
     ASSERT_NE(iter, nullptr);
 
-    while (dict_iter_get(iter, NULL, NULL, NULL, NULL) == DICT_OK) {
+    while (dict_iter_is_valid(iter)) {
+        EXPECT_EQ(dict_iter_get(iter, NULL, NULL, NULL, NULL), DICT_OK);
         count++;
         dict_iter_next(iter);
     }

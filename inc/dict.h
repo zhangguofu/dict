@@ -235,6 +235,13 @@ int dict_iter_get(dict_iter_t iter,
                   void *value_out, size_t *vlen_out);
 
 /**
+ * @brief Check if iterator current position is valid
+ * @param iter Iterator handle
+ * @return 1 if valid (pointing to a valid element), 0 if invalid (traversal complete)
+ */
+int dict_iter_is_valid(dict_iter_t iter);
+
+/**
  * @brief Move to next element
  *
  * Only updates iterator position, does not return data
