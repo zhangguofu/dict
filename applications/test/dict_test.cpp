@@ -3027,7 +3027,6 @@ TEST(DictIteratorBoundaryTest, NextAfterDestroyed)
     char key[32] = {0}, value[32] = {0};
     size_t vlen = 0;
     EXPECT_EQ(dict_iter_get(iter, key, NULL, value, &vlen), DICT_OK);
-    printf("Before destroy - key: '%s', value: '%s', vlen: %zu\n", key, value, vlen);
     EXPECT_STREQ(key, "x");
     EXPECT_STREQ(value, "99");
 
@@ -3039,7 +3038,6 @@ TEST(DictIteratorBoundaryTest, NextAfterDestroyed)
     memset(key, 0, sizeof(key));
     memset(value, 0, sizeof(value));
     EXPECT_EQ(dict_iter_get(iter, key, NULL, value, &vlen), DICT_OK);
-    printf("After destroy - key: '%s', value: '%s', vlen: %zu\n", key, value, vlen);
     EXPECT_STREQ(key, "x");
     EXPECT_STREQ(value, "99");
 
