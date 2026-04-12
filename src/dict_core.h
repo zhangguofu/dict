@@ -39,22 +39,32 @@
  */
 typedef struct dict_node {
     struct dict_node *next;  /* Next node in linked list */
-    uint16_t key_len;         /* Key length in bytes */
-    uint16_t value_len;       /* Value length in bytes */
-    char data[1];             /* Flexible array start, actual size variable */
+    uint16_t key_len;        /* Key length in bytes */
+    uint16_t value_len;      /* Value length in bytes */
+    char data[1];            /* Flexible array start, actual size variable */
 } dict_node_t;
+
+/* Forward declaration for iterator */
+typedef struct dict_iter_impl dict_iter_impl_t;
 
 /**
  * @brief Dictionary structure (internal use)
  */
 typedef struct {
-    dict_node_t **buckets;    /* Bucket array (linked list head pointer array) */
-    size_t capacity;          /* Bucket count (power of 2) */
+    dict_node_t **buckets;    /* Current bucket array (linked list head pointer array) */
+    size_t capacity;          /* Current bucket count (power of 2) */
     size_t size;              /* Current element count */
     size_t threshold;         /* Resize threshold (capacity * DICT_LOAD_FACTOR) */
     dict_key_type_t key_type; /* Key type */
     size_t key_size;          /* Key length for NUMBER/BINARY */
     dict_hash_fn_t hash_fn;   /* Custom hash function, NULL uses default */
+    dict_iter_impl_t *iter_head;  /* Head of active iterator list */
+
+    /* Migration support for iterator safety */
+    dict_node_t **new_buckets;    /* Old bucket array during migration (NULL when not migrating) */
+    size_t new_capacity;          /* New capacity during migration */
+    int is_migrating;             /* Migration in progress flag */
+    int iter_count;               /* Active iterator count */
 } dict_t;
 
 /* Node size calculation macro
@@ -67,10 +77,10 @@ typedef struct {
 #define DICT_NODE_KEY(node) ((node)->data)
 
 /* Get value pointer */
-#define DICT_NODE_VALUE(node) ((void*)((node)->data + (node)->key_len + 1))
+#define DICT_NODE_VALUE(node) ((void *)((node)->data + (node)->key_len + 1))
 
 /* Node key data start position (BINARY/NUMBER type compares data directly, no '\0') */
-#define DICT_NODE_RAW_KEY(node) ((void*)(node)->data)
+#define DICT_NODE_RAW_KEY(node) ((void *)(node)->data)
 
 /* ============================================
  * Iterator Internal Structure
@@ -79,11 +89,15 @@ typedef struct {
 /**
  * @brief Iterator structure (internal use, opaque to external)
  */
-typedef struct {
+struct dict_iter_impl {
     dict_t *dict;            /* Associated dictionary */
-    size_t bucket_idx;       /* Current bucket index */
+    size_t bucket_idx;       /* Current bucket index (relative to iter_buckets) */
     void *node;             /* Current node pointer */
-} dict_iter_impl_t;
+    dict_node_t **iter_buckets;  /* Snapshot of bucket array at creation time */
+    size_t iter_capacity;        /* Snapshot of capacity at creation time */
+    dict_iter_impl_t *prev;  /* Previous iterator in list */
+    dict_iter_impl_t *next;  /* Next iterator in list */
+};
 
 /* ============================================
  * Internal Helper Function Declarations

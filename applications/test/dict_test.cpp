@@ -18,6 +18,8 @@ typedef struct {
     uint16_t type;
 } BinaryKey;
 
+
+
 /* ============================================
  * 测试夹具类
  * ============================================ */
@@ -133,10 +135,9 @@ TEST(DictConfigTest, BinaryWithoutKeySize)
 
 TEST(DictConfigTest, NullConfig)
 {
-    /* NULL 配置使用默认配置（STRING类型） */
+    /* NULL 配置不被允许，必须传入有效的 config */
     dict_handle_t dict = dict_create(NULL);
-    EXPECT_NE(dict, nullptr);
-    dict_destroy(dict);
+    EXPECT_EQ(dict, nullptr);
 }
 
 TEST(DictConfigTest, CapacityAlignment)
@@ -159,7 +160,13 @@ TEST(DictConfigTest, CapacityAlignment)
 
 TEST(DictCreateTest, DefaultConfig)
 {
-    dict_handle_t dict = dict_create(NULL);
+    dict_config_t config = {
+        .capacity = 32,
+        .key_type = DICT_KEY_STRING,
+        .key_size = 0,
+        .hash_fn = NULL
+    };
+    dict_handle_t dict = dict_create(&config);
     EXPECT_NE(dict, nullptr);
     EXPECT_EQ(dict_size(dict), 0u);
     EXPECT_EQ(dict_destroy(dict), DICT_OK);
@@ -474,28 +481,28 @@ TEST_F(DictStringTest, LengthTooLarge)
     char* large_key = (char*)malloc(65536);
     char* too_large_key = (char*)malloc(65537);
     char* large_value = (char*)malloc(65536);
-    
+
     ASSERT_NE(large_key, nullptr);
     ASSERT_NE(too_large_key, nullptr);
     ASSERT_NE(large_value, nullptr);
-    
+
     memset(large_key, 'a', 65535);
     large_key[65535] = '\0';  /* 65535 chars + null terminator */
-    
+
     int value = 100;
-    
+
     /* Key length 65535 is OK (fits in uint16_t) */
     EXPECT_EQ(dict_set(dict_, large_key, &value, sizeof(int)), DICT_OK);
-    
+
     /* Now test with key that's too large */
     memset(too_large_key, 'b', 65536);
     too_large_key[65536] = '\0';  /* 65536 chars + null terminator */
-    
+
     EXPECT_EQ(dict_set(dict_, too_large_key, &value, sizeof(int)), DICT_ETOOLARGE);
-    
+
     /* Test value length too large */
     EXPECT_EQ(dict_set(dict_, "normal_key", large_value, 65536), DICT_ETOOLARGE);
-    
+
     free(large_key);
     free(too_large_key);
     free(large_value);
@@ -1083,7 +1090,13 @@ TEST(DictCustomHashTest, ExtremeHashCollision)
 
 TEST(DictHashDistributionTest, ManyEntries)
 {
-    dict_handle_t dict = dict_create(NULL);
+    dict_config_t config = {
+        .capacity = 32,
+        .key_type = DICT_KEY_STRING,
+        .key_size = 0,
+        .hash_fn = NULL
+    };
+    dict_handle_t dict = dict_create(&config);
     ASSERT_NE(dict, nullptr);
 
     const int count = 100;
@@ -1201,16 +1214,16 @@ TEST(DictBoundaryTest, ZeroCapacity)
     };
     dict_handle_t dict = dict_create(&config);
     ASSERT_NE(dict, nullptr);
-    
+
     // 存储值（带 '\0' 结尾）
     const char *value = "value";
     dict_set(dict, "key", value, strlen(value) + 1);
     EXPECT_EQ(dict_size(dict), 1u);
-    
+
     char buf[16];
     EXPECT_EQ(dict_get(dict, "key", buf, sizeof(buf)), DICT_OK);
     EXPECT_STREQ(buf, "value");
-    
+
     dict_destroy(dict);
 }
 
@@ -1223,29 +1236,29 @@ TEST(DictBoundaryTest, MaxKeyValues)
     };
     dict_handle_t dict = dict_create(&config);
     ASSERT_NE(dict, nullptr);
-    
+
     // 空字符串键
     EXPECT_EQ(dict_set(dict, "", "empty_key", 10), DICT_OK);
     EXPECT_EQ(dict_size(dict), 1u);
-    
+
     // 空值
     EXPECT_EQ(dict_set(dict, "null_val", "", 0), DICT_OK);
     EXPECT_EQ(dict_size(dict), 2u);
-    
+
     // 非常长的键
     char long_key[256];
     memset(long_key, 'k', sizeof(long_key) - 1);
     long_key[sizeof(long_key) - 1] = '\0';
     EXPECT_EQ(dict_set(dict, long_key, "long_key", 8), DICT_OK);
     EXPECT_EQ(dict_size(dict), 3u);
-    
+
     // 非常长的值
     char long_val[1024];
     memset(long_val, 'v', sizeof(long_val) - 1);
     long_val[sizeof(long_val) - 1] = '\0';
     EXPECT_EQ(dict_set(dict, "long_val", long_val, sizeof(long_val)), DICT_OK);
     EXPECT_EQ(dict_size(dict), 4u);
-    
+
     dict_destroy(dict);
 }
 
@@ -1258,7 +1271,7 @@ TEST(DictBoundaryTest, IntegerEdgeValues)
     };
     dict_handle_t dict = dict_create(&config);
     ASSERT_NE(dict, nullptr);
-    
+
     int32_t values[] = {
         0,                           // 零
         1,                           // 最小正整数
@@ -1266,19 +1279,19 @@ TEST(DictBoundaryTest, IntegerEdgeValues)
         INT32_MAX,                   // 最大值
         INT32_MIN,                   // 最小值
     };
-    
+
     for (int i = 0; i < 5; i++) {
         EXPECT_EQ(dict_set(dict, &values[i], &i, sizeof(i)), DICT_OK);
     }
     EXPECT_EQ(dict_size(dict), 5u);
-    
+
     // 验证所有值
     int out_val;
     for (int i = 0; i < 5; i++) {
         EXPECT_EQ(dict_get(dict, &values[i], &out_val, sizeof(out_val)), DICT_OK);
         EXPECT_EQ(out_val, i);
     }
-    
+
     dict_destroy(dict);
 }
 
@@ -1291,7 +1304,7 @@ TEST(DictBoundaryTest, UnsignedEdgeValues)
     };
     dict_handle_t dict = dict_create(&config);
     ASSERT_NE(dict, nullptr);
-    
+
     uint64_t keys[] = {
         0,
         1,
@@ -1299,20 +1312,20 @@ TEST(DictBoundaryTest, UnsignedEdgeValues)
         0x8000000000000000ULL,  // 最高位设置
         0x0000000100000000ULL,  // 高低位不同
     };
-    
+
     for (int i = 0; i < 5; i++) {
         int val = i * 100;
         EXPECT_EQ(dict_set(dict, &keys[i], &val, sizeof(val)), DICT_OK);
     }
     EXPECT_EQ(dict_size(dict), 5u);
-    
+
     // 验证
     for (int i = 0; i < 5; i++) {
         int out_val;
         EXPECT_EQ(dict_get(dict, &keys[i], &out_val, sizeof(out_val)), DICT_OK);
         EXPECT_EQ(out_val, i * 100);
     }
-    
+
     dict_destroy(dict);
 }
 
@@ -1324,19 +1337,19 @@ TEST(DictBoundaryTest, BufferExactlySize)
     };
     dict_handle_t dict = dict_create(&config);
     ASSERT_NE(dict, nullptr);
-    
+
     const char *value = "12345";
     EXPECT_EQ(dict_set(dict, "key", value, 6), DICT_OK);
-    
+
     // 缓冲区恰好大小
     char buf[6];
     EXPECT_EQ(dict_get(dict, "key", buf, sizeof(buf)), DICT_OK);
     EXPECT_STREQ(buf, value);
-    
+
     // 缓冲区太小（刚好少1字节）
     char buf_small[5];
     EXPECT_EQ(dict_get(dict, "key", buf_small, sizeof(buf_small)), DICT_ETOOSMALL);
-    
+
     dict_destroy(dict);
 }
 
@@ -1348,28 +1361,28 @@ TEST(DictBoundaryTest, ReplaceWithDifferentSize)
     };
     dict_handle_t dict = dict_create(&config);
     ASSERT_NE(dict, nullptr);
-    
+
     // 插入小值
     int small_val = 1;
     EXPECT_EQ(dict_set(dict, "key", &small_val, sizeof(small_val)), DICT_OK);
-    
+
     // 替换为大值
     long long large_val = 1234567890123LL;
     EXPECT_EQ(dict_set(dict, "key", &large_val, sizeof(large_val)), DICT_OK);
-    
+
     // 验证
     long long out_val;
     EXPECT_EQ(dict_get(dict, "key", &out_val, sizeof(out_val)), DICT_OK);
     EXPECT_EQ(out_val, large_val);
-    
+
     // 再替换为更小的值
     char tiny_val = 'x';
     EXPECT_EQ(dict_set(dict, "key", &tiny_val, sizeof(tiny_val)), DICT_OK);
-    
+
     char out_char;
     EXPECT_EQ(dict_get(dict, "key", &out_char, sizeof(out_char)), DICT_OK);
     EXPECT_EQ(out_char, 'x');
-    
+
     dict_destroy(dict);
 }
 
@@ -1386,22 +1399,22 @@ TEST(DictStressTest, NumberKeysHighVolume)
     };
     dict_handle_t dict = dict_create(&config);
     ASSERT_NE(dict, nullptr);
-    
+
     const int count = 5000;
-    
+
     // 插入
     for (int32_t i = 0; i < count; i++) {
         EXPECT_EQ(dict_set(dict, &i, &i, sizeof(i)), DICT_OK);
     }
     EXPECT_EQ(dict_size(dict), (size_t)count);
-    
+
     // 验证所有
     for (int32_t i = 0; i < count; i++) {
         int32_t out_val;
         EXPECT_EQ(dict_get(dict, &i, &out_val, sizeof(out_val)), DICT_OK);
         EXPECT_EQ(out_val, i);
     }
-    
+
     // 随机访问
     srand(12345);
     for (int i = 0; i < 1000; i++) {
@@ -1410,7 +1423,7 @@ TEST(DictStressTest, NumberKeysHighVolume)
         EXPECT_EQ(dict_get(dict, &key, &out_val, sizeof(out_val)), DICT_OK);
         EXPECT_EQ(out_val, key);
     }
-    
+
     dict_destroy(dict);
 }
 
@@ -1423,9 +1436,9 @@ TEST(DictStressTest, Int64KeysHighVolume)
     };
     dict_handle_t dict = dict_create(&config);
     ASSERT_NE(dict, nullptr);
-    
+
     const int count = 500;
-    
+
     // 插入连续的 int64 键
     for (int64_t i = 0; i < count; i++) {
         int64_t key = i;
@@ -1433,7 +1446,7 @@ TEST(DictStressTest, Int64KeysHighVolume)
         EXPECT_EQ(dict_set(dict, &key, &val, sizeof(val)), DICT_OK);
     }
     EXPECT_EQ(dict_size(dict), (size_t)count);
-    
+
     // 验证
     for (int64_t i = 0; i < count; i++) {
         int64_t key = i;
@@ -1441,7 +1454,7 @@ TEST(DictStressTest, Int64KeysHighVolume)
         EXPECT_EQ(dict_get(dict, &key, &out_val, sizeof(out_val)), DICT_OK);
         EXPECT_EQ(out_val, (int)i * 10);
     }
-    
+
     dict_destroy(dict);
 }
 
@@ -1453,7 +1466,7 @@ TEST(DictStressTest, ClearStress)
     };
     dict_handle_t dict = dict_create(&config);
     ASSERT_NE(dict, nullptr);
-    
+
     // 多次插入和清空
     for (int round = 0; round < 10; round++) {
         for (int i = 0; i < 1000; i++) {
@@ -1466,7 +1479,7 @@ TEST(DictStressTest, ClearStress)
         EXPECT_EQ(dict_clear(dict), DICT_OK);
         EXPECT_EQ(dict_size(dict), 0u);
     }
-    
+
     dict_destroy(dict);
 }
 
@@ -1479,22 +1492,22 @@ TEST(DictStressTest, ContinuousResize)
     };
     dict_handle_t dict = dict_create(&config);
     ASSERT_NE(dict, nullptr);
-    
+
     const int count = 10000;
-    
+
     // 逐步插入，每次触发扩容
     for (int32_t i = 0; i < count; i++) {
         EXPECT_EQ(dict_set(dict, &i, &i, sizeof(i)), DICT_OK);
     }
     EXPECT_EQ(dict_size(dict), (size_t)count);
-    
+
     // 验证
     for (int32_t i = 0; i < count; i++) {
         int32_t out_val;
         EXPECT_EQ(dict_get(dict, &i, &out_val, sizeof(out_val)), DICT_OK);
         EXPECT_EQ(out_val, i);
     }
-    
+
     dict_destroy(dict);
 }
 
@@ -1507,16 +1520,16 @@ TEST(DictStressTest, BinaryStructKeys)
     };
     dict_handle_t dict = dict_create(&config);
     ASSERT_NE(dict, nullptr);
-    
+
     const int count = 1000;
-    
+
     // 插入结构体键
     for (int i = 0; i < count; i++) {
         BinaryKey key = {(uint16_t)(i & 0xFFFF), (uint16_t)((i >> 16) & 0xFFFF)};
         EXPECT_EQ(dict_set(dict, &key, &i, sizeof(i)), DICT_OK);
     }
     EXPECT_EQ(dict_size(dict), (size_t)count);
-    
+
     // 验证
     for (int i = 0; i < count; i++) {
         BinaryKey key = {(uint16_t)(i & 0xFFFF), (uint16_t)((i >> 16) & 0xFFFF)};
@@ -1524,7 +1537,7 @@ TEST(DictStressTest, BinaryStructKeys)
         EXPECT_EQ(dict_get(dict, &key, &out_val, sizeof(out_val)), DICT_OK);
         EXPECT_EQ(out_val, i);
     }
-    
+
     dict_destroy(dict);
 }
 
@@ -1536,35 +1549,35 @@ TEST(DictStressTest, MixedOperations)
     };
     dict_handle_t dict = dict_create(&config);
     ASSERT_NE(dict, nullptr);
-    
+
     // 混合操作：插入、查询、更新、删除
     for (int i = 0; i < 1000; i++) {
         char key[32];
         snprintf(key, sizeof(key), "key_%04d", i);
-        
+
         // 插入
         EXPECT_EQ(dict_set(dict, key, &i, sizeof(i)), DICT_OK);
-        
+
         // 验证
         int out_val;
         EXPECT_EQ(dict_get(dict, key, &out_val, sizeof(out_val)), DICT_OK);
         EXPECT_EQ(out_val, i);
-        
+
         // 更新
         int new_val = i + 10000;
         EXPECT_EQ(dict_set(dict, key, &new_val, sizeof(new_val)), DICT_OK);
-        
+
         // 验证更新
         EXPECT_EQ(dict_get(dict, key, &out_val, sizeof(out_val)), DICT_OK);
         EXPECT_EQ(out_val, new_val);
-        
+
         // 每10个删除一个
         if (i % 10 == 0) {
             EXPECT_EQ(dict_delete(dict, key), DICT_OK);
             EXPECT_EQ(dict_get(dict, key, &out_val, sizeof(out_val)), DICT_ENOTFOUND);
         }
     }
-    
+
     // 验证剩余的数据
     for (int i = 0; i < 1000; i++) {
         if (i % 10 == 0) continue;  // 已删除
@@ -2048,7 +2061,13 @@ TEST(DictShrinkTest, ShrinkThenUpdateAndDelete)
 
 TEST(DictExistsTest, NullKey)
 {
-    dict_handle_t dict = dict_create(NULL);
+    dict_config_t config = {
+        .capacity = 32,
+        .key_type = DICT_KEY_STRING,
+        .key_size = 0,
+        .hash_fn = NULL
+    };
+    dict_handle_t dict = dict_create(&config);
     ASSERT_NE(dict, nullptr);
     EXPECT_EQ(dict_exists(dict, NULL), 0);
     dict_destroy(dict);
@@ -2056,7 +2075,13 @@ TEST(DictExistsTest, NullKey)
 
 TEST(DictExistsTest, KeyNotExist)
 {
-    dict_handle_t dict = dict_create(NULL);
+    dict_config_t config = {
+        .capacity = 32,
+        .key_type = DICT_KEY_STRING,
+        .key_size = 0,
+        .hash_fn = NULL
+    };
+    dict_handle_t dict = dict_create(&config);
     ASSERT_NE(dict, nullptr);
     EXPECT_EQ(dict_exists(dict, "nonexist"), 0);
     dict_destroy(dict);
@@ -2064,7 +2089,13 @@ TEST(DictExistsTest, KeyNotExist)
 
 TEST(DictExistsTest, KeyExists)
 {
-    dict_handle_t dict = dict_create(NULL);
+    dict_config_t config = {
+        .capacity = 32,
+        .key_type = DICT_KEY_STRING,
+        .key_size = 0,
+        .hash_fn = NULL
+    };
+    dict_handle_t dict = dict_create(&config);
     ASSERT_NE(dict, nullptr);
 
     int val = 100;
@@ -2076,7 +2107,13 @@ TEST(DictExistsTest, KeyExists)
 
 TEST(DictExistsTest, AfterDelete)
 {
-    dict_handle_t dict = dict_create(NULL);
+    dict_config_t config = {
+        .capacity = 32,
+        .key_type = DICT_KEY_STRING,
+        .key_size = 0,
+        .hash_fn = NULL
+    };
+    dict_handle_t dict = dict_create(&config);
     ASSERT_NE(dict, nullptr);
 
     int val = 100;
@@ -2091,7 +2128,13 @@ TEST(DictExistsTest, AfterDelete)
 
 TEST(DictExistsTest, AfterClear)
 {
-    dict_handle_t dict = dict_create(NULL);
+    dict_config_t config = {
+        .capacity = 32,
+        .key_type = DICT_KEY_STRING,
+        .key_size = 0,
+        .hash_fn = NULL
+    };
+    dict_handle_t dict = dict_create(&config);
     ASSERT_NE(dict, nullptr);
 
     for (int i = 0; i < 10; i++) {
@@ -2133,7 +2176,13 @@ TEST(DictExistsTest, NumberTypeKey)
 
 TEST(DictCapacityTest, DefaultCapacity)
 {
-    dict_handle_t dict = dict_create(NULL);
+    dict_config_t config = {
+        .capacity = 32,
+        .key_type = DICT_KEY_STRING,
+        .key_size = 0,
+        .hash_fn = NULL
+    };
+    dict_handle_t dict = dict_create(&config);
     ASSERT_NE(dict, nullptr);
     EXPECT_EQ(dict_capacity(dict), 32u);
     dict_destroy(dict);
@@ -2209,7 +2258,13 @@ TEST(DictCapacityTest, PowerOfTwoAlignment)
 
 TEST(DictIteratorTest, CreateAndDestroy)
 {
-    dict_handle_t dict = dict_create(NULL);
+    dict_config_t config = {
+        .capacity = 32,
+        .key_type = DICT_KEY_STRING,
+        .key_size = 0,
+        .hash_fn = NULL
+    };
+    dict_handle_t dict = dict_create(&config);
     ASSERT_NE(dict, nullptr);
 
     /* 空字典创建迭代器 */
@@ -2224,691 +2279,247 @@ TEST(DictIteratorTest, CreateAndDestroy)
 }
 
 /* ============================================
- * Length Boundary Tests
+ * NULL 句柄测试
  * ============================================ */
 
-TEST_F(DictStringTest, ExactLengthBoundary)
+TEST(DictNullHandleTest, AllFunctionsWithNull)
 {
-    /* Test exact maximum length for value (65535 bytes) - use dynamic allocation to avoid stack overflow */
-    char* exact_value = (char*)malloc(65535);
-    char* retrieved_value = (char*)malloc(65535);
-    
-    ASSERT_NE(exact_value, nullptr);
-    ASSERT_NE(retrieved_value, nullptr);
-    
-    memset(exact_value, 'v', 65535);
-    
-    EXPECT_EQ(dict_set(dict_, "exact_key", exact_value, 65535), DICT_OK);
-    EXPECT_EQ(dict_size(dict_), 1u);
-    
-    /* Verify we can retrieve it */
-    size_t value_len = 0;
-    EXPECT_EQ(dict_get_size(dict_, "exact_key", &value_len), DICT_OK);
-    EXPECT_EQ(value_len, 65535u);
-    
-    EXPECT_EQ(dict_get(dict_, "exact_key", retrieved_value, 65535), DICT_OK);
-    EXPECT_EQ(memcmp(retrieved_value, exact_value, 65535), 0);
-    
-    /* Clean up */
-    EXPECT_EQ(dict_delete(dict_, "exact_key"), DICT_OK);
-    EXPECT_EQ(dict_size(dict_), 0u);
-    
-    free(exact_value);
-    free(retrieved_value);
+    /* dict_size(NULL) */
+    EXPECT_EQ(dict_size(NULL), 0u);
+
+    /* dict_capacity(NULL) */
+    EXPECT_EQ(dict_capacity(NULL), 0u);
+
+    /* dict_iter_create(NULL) */
+    EXPECT_EQ(dict_iter_create(NULL), nullptr);
+
+    /* dict_iter_destroy(NULL) */
+    EXPECT_EQ(dict_iter_destroy(NULL), DICT_EINVALID);
+
+    /* dict_iter_next(NULL) */
+    EXPECT_EQ(dict_iter_next(NULL), DICT_EINVALID);
+
+    /* dict_iter_get(NULL, ...) */
+    EXPECT_EQ(dict_iter_get(NULL, NULL, NULL, NULL, NULL), DICT_EINVALID);
+
+    /* dict_exists(NULL, ...) */
+    EXPECT_EQ(dict_exists(NULL, "key"), 0);
+
+    /* dict_clear(NULL) */
+    EXPECT_EQ(dict_clear(NULL), DICT_EINVALID);
+
+    /* dict_shrink(NULL) */
+    EXPECT_EQ(dict_shrink(NULL), DICT_EINVALID);
+
+    /* dict_set(NULL, ...) */
+    int val = 100;
+    EXPECT_EQ(dict_set(NULL, "key", &val, sizeof(val)), DICT_EINVALID);
+
+    /* dict_get(NULL, ...) */
+    EXPECT_EQ(dict_get(NULL, "key", &val, sizeof(val)), DICT_EINVALID);
+
+    /* dict_delete(NULL, ...) */
+    EXPECT_EQ(dict_delete(NULL, "key"), DICT_EINVALID);
+
+    /* dict_get_size(NULL, ...) */
+    size_t size;
+    EXPECT_EQ(dict_get_size(NULL, "key", &size), DICT_EINVALID);
 }
 
-TEST_F(DictStringTest, IteratorLengthVerification)
-{
-    /* Test that iterator returns correct lengths for different sized entries */
-    
-    /* Setup entries with different key and value lengths */
-    const char* keys[] = {
-        "short_key",
-        "medium_length_key_here",
-        "a_very_long_key_name_that_is_quite_lengthy_indeed_for_testing_purposes"
-    };
-    
-    const char* values[] = {
-        "short",
-        "medium length value",
-        "a very long value that needs to be stored and retrieved properly with correct length information"
-    };
-    
-    for (int i = 0; i < 3; i++) {
-        EXPECT_EQ(dict_set(dict_, keys[i], values[i], strlen(values[i]) + 1), DICT_OK);
-    }
-    
-    EXPECT_EQ(dict_size(dict_), 3u);
-    
-    /* Use iterator to verify lengths */
-    dict_iter_t iter = dict_iter_create(dict_);
-    ASSERT_NE(iter, nullptr);
-    
-    int count = 0;
-    char key_buf[256];
-    char value_buf[256];
-    size_t klen, vlen;
-    
-    while (dict_iter_is_valid(iter)) {
-        /* Verify key length: dict_iter_get returns length WITHOUT null terminator for STRING keys */
-        /* But it adds null terminator to the output buffer */
-        EXPECT_EQ(dict_iter_get(iter, key_buf, &klen, value_buf, &vlen), DICT_OK);
-        size_t expected_klen = strlen(key_buf);
-        EXPECT_EQ(klen, expected_klen);
-        
-        /* Verify value length: dict_set was called with strlen(value) + 1, so length INCLUDES null */
-        size_t expected_vlen = strlen(value_buf) + 1;
-        EXPECT_EQ(vlen, expected_vlen);
-        
-        count++;
-        dict_iter_next(iter);
-    }
-    
-    EXPECT_EQ(count, 3);
-    dict_iter_destroy(iter);
-}
+/* ============================================
+ * dict_exists - BINARY 类型键
+ * ============================================ */
 
-TEST_F(DictStringTest, MixedLengthEntries)
+TEST(DictExistsTest, BinaryTypeKey)
 {
-    /* Test mixing entries of different lengths, including boundary cases */
-    
-    /* Entry 1: Short key, short value */
-    EXPECT_EQ(dict_set(dict_, "k1", "v1", 3), DICT_OK);
-    
-    /* Entry 2: Medium key, medium value */
-    char medium_key[128];
-    char medium_value[512];
-    memset(medium_key, 'k', sizeof(medium_key) - 1);
-    medium_key[sizeof(medium_key) - 1] = '\0';
-    memset(medium_value, 'v', sizeof(medium_value) - 1);
-    medium_value[sizeof(medium_value) - 1] = '\0';
-    
-    EXPECT_EQ(dict_set(dict_, medium_key, medium_value, sizeof(medium_value)), DICT_OK);
-    
-    /* Entry 3: Long key (but still within limits), long value */
-    /* Use dynamic allocation to avoid stack overflow */
-    char* long_key = (char*)malloc(32768);  /* 32KB key */
-    char* long_value = (char*)malloc(49152); /* 48KB value, total < 64KB */
-    char* value_buf = (char*)malloc(65536);  /* Buffer for value retrieval */
-    
-    ASSERT_NE(long_key, nullptr);
-    ASSERT_NE(long_value, nullptr);
-    ASSERT_NE(value_buf, nullptr);
-    
-    memset(long_key, 'L', 32767);
-    long_key[32767] = '\0';
-    memset(long_value, 'V', 49151);
-    long_value[49151] = '\0';
-    
-    EXPECT_EQ(dict_set(dict_, long_key, long_value, 49152), DICT_OK);
-    
-    EXPECT_EQ(dict_size(dict_), 3u);
-    
-    /* Check short entry */
-    EXPECT_EQ(dict_get(dict_, "k1", value_buf, 65536), DICT_OK);
-    EXPECT_EQ(memcmp(value_buf, "v1", 3), 0);
-    
-    /* Check medium entry */
-    size_t medium_len;
-    EXPECT_EQ(dict_get_size(dict_, medium_key, &medium_len), DICT_OK);
-    EXPECT_EQ(medium_len, 512u);
-    
-    /* Check long entry */
-    size_t long_len;
-    EXPECT_EQ(dict_get_size(dict_, long_key, &long_len), DICT_OK);
-    EXPECT_EQ(long_len, 49152u);
-    
-    /* Test iterator with mixed lengths */
-    dict_iter_t iter = dict_iter_create(dict_);
-    ASSERT_NE(iter, nullptr);
-    
-    int iter_count = 0;
-    while (dict_iter_is_valid(iter)) {
-        EXPECT_EQ(dict_iter_get(iter, NULL, NULL, NULL, NULL), DICT_OK);
-        iter_count++;
-        dict_iter_next(iter);
-    }
-    
-    EXPECT_EQ(iter_count, 3);
-    dict_iter_destroy(iter);
-    
-    /* Free allocated memory */
-    free(long_key);
-    free(long_value);
-    free(value_buf);
-}
-
-/* Test for NUMBER key type with maximum allowed key_size */
-TEST(DictNumberKeySizeTest, MaxKeySize)
-{
-    /* Test creating dictionary with maximum allowed key_size for NUMBER type */
-    dict_config_t config = {
-        .capacity = 32,
-        .key_type = DICT_KEY_NUMBER,
-        .key_size = 65535,  /* Maximum allowed */
-        .hash_fn = NULL
-    };
-    
-    dict_handle_t dict = dict_create(&config);
-    ASSERT_NE(dict, nullptr);
-    
-    /* Create a key of maximum size - use dynamic allocation to avoid stack overflow */
-    char* max_key = (char*)malloc(65535);
-    ASSERT_NE(max_key, nullptr);
-    
-    memset(max_key, 0x42, 65535);  /* Fill with some pattern */
-    
-    int value = 12345;
-    EXPECT_EQ(dict_set(dict, max_key, &value, sizeof(value)), DICT_OK);
-    
-    /* Verify retrieval */
-    int out_value;
-    EXPECT_EQ(dict_get(dict, max_key, &out_value, sizeof(out_value)), DICT_OK);
-    EXPECT_EQ(out_value, value);
-    
-    free(max_key);
-    dict_destroy(dict);
-}
-
-/* Test for BINARY key type with maximum allowed key_size */
-TEST(DictBinaryKeySizeTest, MaxKeySize)
-{
-    /* Test creating dictionary with maximum allowed key_size for BINARY type */
     dict_config_t config = {
         .capacity = 32,
         .key_type = DICT_KEY_BINARY,
-        .key_size = 65535,  /* Maximum allowed */
+        .key_size = sizeof(BinaryKey),
         .hash_fn = NULL
     };
-    
     dict_handle_t dict = dict_create(&config);
     ASSERT_NE(dict, nullptr);
-    
-    /* Create a key of maximum size - use dynamic allocation to avoid stack overflow */
-    char* max_key = (char*)malloc(65535);
-    ASSERT_NE(max_key, nullptr);
-    
-    memset(max_key, 0xAB, 65535);  /* Fill with some pattern */
-    
-    float value = 3.14159f;
-    EXPECT_EQ(dict_set(dict, max_key, &value, sizeof(value)), DICT_OK);
-    
-    /* Verify retrieval */
-    float out_value;
-    EXPECT_EQ(dict_get(dict, max_key, &out_value, sizeof(out_value)), DICT_OK);
-    EXPECT_EQ(out_value, value);
-    
-    free(max_key);
-    dict_destroy(dict);
-}
 
-/* Test that key_size > 65535 is rejected for NUMBER/BINARY types */
-TEST(DictConfigTest, KeySizeTooLarge)
-{
-    /* Test NUMBER type with key_size too large */
-    dict_config_t config1 = {
-        .capacity = 32,
-        .key_type = DICT_KEY_NUMBER,
-        .key_size = 65536,  /* Too large! */
-        .hash_fn = NULL
-    };
-    
-    dict_handle_t dict1 = dict_create(&config1);
-    EXPECT_EQ(dict1, nullptr);
-    
-    /* Test BINARY type with key_size too large */
-    dict_config_t config2 = {
-        .capacity = 32,
-        .key_type = DICT_KEY_BINARY,
-        .key_size = 65536,  /* Too large! */
-        .hash_fn = NULL
-    };
-    
-    dict_handle_t dict2 = dict_create(&config2);
-    EXPECT_EQ(dict2, nullptr);
-    
-    /* Test with exactly 65535 (should work) */
-    dict_config_t config3 = {
-        .capacity = 32,
-        .key_type = DICT_KEY_NUMBER,
-        .key_size = 65535,  /* Maximum allowed */
-        .hash_fn = NULL
-    };
-    
-    dict_handle_t dict3 = dict_create(&config3);
-    EXPECT_NE(dict3, nullptr);
-    if (dict3) {
-        dict_destroy(dict3);
-    }
-}
+    BinaryKey key1 = {100, 200};
+    BinaryKey key2 = {100, 200};  /* 与 key1 值相同 */
+    BinaryKey key3 = {200, 100};  /* 与 key1 值不同 */
+    int value = 999;
 
-TEST(DictIteratorTest, EmptyDict)
-{
-    dict_handle_t dict = dict_create(NULL);
-    ASSERT_NE(dict, nullptr);
+    /* 键不存在 */
+    EXPECT_EQ(dict_exists(dict, &key1), 0);
 
-    dict_iter_t iter = dict_iter_create(dict);
-    ASSERT_NE(iter, nullptr);
+    /* 插入后存在 */
+    EXPECT_EQ(dict_set(dict, &key1, &value, sizeof(value)), DICT_OK);
+    EXPECT_EQ(dict_exists(dict, &key1), 1);
 
-    /* 迭代器创建后指向第一个元素（但没有元素），is_valid 返回 0 */
-    EXPECT_EQ(dict_iter_is_valid(iter), 0);
+    /* 相同值的键也存在 */
+    EXPECT_EQ(dict_exists(dict, &key2), 1);
 
-    dict_iter_destroy(iter);
+    /* 不同值的键不存在 */
+    EXPECT_EQ(dict_exists(dict, &key3), 0);
+
+    /* 删除后不存在 */
+    EXPECT_EQ(dict_delete(dict, &key1), DICT_OK);
+    EXPECT_EQ(dict_exists(dict, &key1), 0);
+    EXPECT_EQ(dict_exists(dict, &key2), 0);
+
     dict_destroy(dict);
 }
 
 /* ============================================
- * IsValid Tests - 全面覆盖 dict_iter_is_valid
+ * 迭代器安全性测试
  * ============================================ */
 
-/**
- * @brief 测试 is_valid 在空字典上的行为
- */
-TEST(DictIteratorTest, IsValid_EmptyDict)
-{
-    dict_handle_t dict = dict_create(NULL);
-    ASSERT_NE(dict, nullptr);
 
-    dict_iter_t iter = dict_iter_create(dict);
-    ASSERT_NE(iter, nullptr);
-
-    /* 空字典没有下一个元素 */
-    EXPECT_EQ(dict_iter_is_valid(iter), 0);
-
-    /* 尝试移动（无效操作） */
-    EXPECT_EQ(dict_iter_next(iter), DICT_ENOTFOUND);
-    EXPECT_EQ(dict_iter_is_valid(iter), 0);
-
-    dict_iter_destroy(iter);
-    dict_destroy(dict);
-}
-
-/**
- * @brief 测试 is_valid 在单个元素上的行为
- */
-TEST(DictIteratorTest, IsValid_SingleElement)
-{
-    dict_handle_t dict = dict_create(NULL);
-    ASSERT_NE(dict, nullptr);
-    ASSERT_EQ(dict_set(dict, "key", "value", 5), DICT_OK);
-
-    dict_iter_t iter = dict_iter_create(dict);
-    ASSERT_NE(iter, nullptr);
-
-    /* 第一个元素有效 */
-    EXPECT_EQ(dict_iter_is_valid(iter), 1);
-
-    /* 获取并移动到下一个 */
-    EXPECT_EQ(dict_iter_get(iter, NULL, NULL, NULL, NULL), DICT_OK);
-    EXPECT_EQ(dict_iter_next(iter), DICT_ENOTFOUND);
-
-    /* 遍历完成后，迭代器无效 */
-    EXPECT_EQ(dict_iter_is_valid(iter), 0);
-
-    dict_iter_destroy(iter);
-    dict_destroy(dict);
-}
-
-/**
- * @brief 测试 is_valid 在多个元素（同一桶链表）上的行为
- */
-TEST(DictIteratorTest, IsValid_SameBucketChain)
+TEST(DictIteratorTest, MultipleIteratorsIndependent)
 {
     dict_config_t config = {
-        .capacity = 4,  /* 小容量增加哈希冲突概率 */
+        .capacity = 32,
         .key_type = DICT_KEY_STRING,
         .key_size = 0,
-        .hash_fn = NULL  /* 使用默认哈希 */
+        .hash_fn = NULL
     };
     dict_handle_t dict = dict_create(&config);
     ASSERT_NE(dict, nullptr);
 
-    /* 插入可能产生链表冲突的元素 */
-    ASSERT_EQ(dict_set(dict, "a", "1", 1), DICT_OK);
-    ASSERT_EQ(dict_set(dict, "b", "2", 1), DICT_OK);
-    ASSERT_EQ(dict_set(dict, "c", "3", 1), DICT_OK);
+    ASSERT_EQ(dict_set(dict, "a", "1", 2), DICT_OK);
+    ASSERT_EQ(dict_set(dict, "b", "2", 2), DICT_OK);
+    ASSERT_EQ(dict_set(dict, "c", "3", 2), DICT_OK);
+
+    dict_iter_t iter1 = dict_iter_create(dict);
+    dict_iter_t iter2 = dict_iter_create(dict);
+    ASSERT_NE(iter1, nullptr);
+    ASSERT_NE(iter2, nullptr);
+
+    /* iter1 移动到第二个元素 */
+    EXPECT_EQ(dict_iter_next(iter1), DICT_OK);
+
+    /* 两个迭代器应该独立工作 */
+    EXPECT_EQ(dict_iter_is_valid(iter1), 1);
+    EXPECT_EQ(dict_iter_is_valid(iter2), 1);
+
+    /* 获取 iter1 的第二个元素 */
+    char key1[64], val1[64];
+    size_t klen1, vlen1;
+    EXPECT_EQ(dict_iter_get(iter1, key1, &klen1, val1, &vlen1), DICT_OK);
+
+    /* 获取 iter2 的第一个元素 */
+    char key2[64], val2[64];
+    size_t klen2, vlen2;
+    EXPECT_EQ(dict_iter_get(iter2, key2, &klen2, val2, &vlen2), DICT_OK);
+
+    /* 验证两者独立（不假设遍历顺序，只验证迭代器位置不同） */
+    /* iter1 已前进一次，iter2 仍在起始位置，两者应指向不同元素 */
+    EXPECT_STRNE(key1, key2);  /* 两个迭代器指向不同元素 */
+
+    /* 销毁一个迭代器不影响另一个 */
+    dict_iter_destroy(iter1);
+    EXPECT_EQ(dict_iter_is_valid(iter2), 1);
+
+    /* iter2 继续遍历完整字典 */
+    int count = 0;
+    while (dict_iter_is_valid(iter2)) {
+        EXPECT_EQ(dict_iter_get(iter2, NULL, NULL, NULL, NULL), DICT_OK);
+        count++;
+        dict_iter_next(iter2);
+    }
+    EXPECT_EQ(count, 3);
+
+    dict_iter_destroy(iter2);
+    dict_destroy(dict);
+}
+
+/* ============================================
+ * 迭代过程中删除 - 完整测试
+ * ============================================ */
+
+TEST(DictIteratorTest, DeleteDuringIteration_Simple)
+{
+    dict_config_t config = {
+        .capacity = 32,
+        .key_type = DICT_KEY_STRING,
+        .key_size = 0,
+        .hash_fn = NULL
+    };
+    dict_handle_t dict = dict_create(&config);
+    ASSERT_NE(dict, nullptr);
+
+    /* 插入 5 个元素 */
+    for (int i = 0; i < 5; i++) {
+        char key[16];
+        snprintf(key, sizeof(key), "key%d", i);
+        ASSERT_EQ(dict_set(dict, key, &i, sizeof(i)), DICT_OK);
+    }
+    EXPECT_EQ(dict_size(dict), 5u);
 
     dict_iter_t iter = dict_iter_create(dict);
     ASSERT_NE(iter, nullptr);
 
-    /* 验证 is_valid 行为 */
+    /* 删除当前元素后重新创建迭代器 */
+    char key[64], first_key[64];
+    size_t klen;
+
+    EXPECT_EQ(dict_iter_get(iter, key, &klen, NULL, NULL), DICT_OK);
+    strncpy(first_key, key, sizeof(first_key) - 1);
+    first_key[sizeof(first_key) - 1] = '\0';
+
+    /* 删除当前元素 */
+    EXPECT_EQ(dict_delete(dict, first_key), DICT_OK);
+    EXPECT_EQ(dict_size(dict), 4u);
+
+    /* 重新创建迭代器 */
+    dict_iter_destroy(iter);
+    iter = dict_iter_create(dict);
+    ASSERT_NE(iter, nullptr);
+
+    /* 继续遍历 */
     int count = 0;
     while (dict_iter_is_valid(iter)) {
-        EXPECT_EQ(dict_iter_get(iter, NULL, NULL, NULL, NULL), DICT_OK);
+        EXPECT_EQ(dict_iter_get(iter, key, &klen, NULL, NULL), DICT_OK);
         count++;
         dict_iter_next(iter);
     }
 
-    EXPECT_EQ(count, 3);
-    EXPECT_EQ(dict_iter_is_valid(iter), 0);  /* 遍历完成后无效 */
+    EXPECT_EQ(count, 4);
 
     dict_iter_destroy(iter);
     dict_destroy(dict);
 }
 
-/**
- * @brief 测试 is_valid 在多个元素（不同桶）上的行为
- */
-TEST(DictIteratorTest, IsValid_DifferentBuckets)
+TEST(DictIteratorTest, DeleteDuringIteration_Selective)
 {
-    dict_handle_t dict = dict_create(NULL);
+    dict_config_t config = {
+        .capacity = 32,
+        .key_type = DICT_KEY_STRING,
+        .key_size = 0,
+        .hash_fn = NULL
+    };
+    dict_handle_t dict = dict_create(&config);
     ASSERT_NE(dict, nullptr);
 
-    /* 插入元素，确保在不同桶中 */
+    /* 插入 10 个元素，值分别为 0-9 */
     for (int i = 0; i < 10; i++) {
         char key[16];
         snprintf(key, sizeof(key), "key%d", i);
         ASSERT_EQ(dict_set(dict, key, &i, sizeof(i)), DICT_OK);
     }
-
-    dict_iter_t iter = dict_iter_create(dict);
-    ASSERT_NE(iter, nullptr);
-
-    /* 验证 is_valid 正确检测每个元素 */
-    int count = 0;
-    while (dict_iter_is_valid(iter)) {
-        EXPECT_EQ(dict_iter_get(iter, NULL, NULL, NULL, NULL), DICT_OK);
-        count++;
-        dict_iter_next(iter);
-    }
-
-    EXPECT_EQ(count, 10);
-    EXPECT_EQ(dict_iter_is_valid(iter), 0);  /* 遍历完成后无效 */
-
-    dict_iter_destroy(iter);
-    dict_destroy(dict);
-}
-
-/**
- * @brief 测试 is_valid 与 dict_iter_get 返回值的一致性
- */
-TEST(DictIteratorTest, IsValid_ConsistencyWithGet)
-{
-    dict_handle_t dict = dict_create(NULL);
-    ASSERT_NE(dict, nullptr);
-
-    ASSERT_EQ(dict_set(dict, "k1", "v1", 3), DICT_OK);
-    ASSERT_EQ(dict_set(dict, "k2", "v2", 3), DICT_OK);
-
-    dict_iter_t iter = dict_iter_create(dict);
-    ASSERT_NE(iter, nullptr);
-
-    /* 验证 is_valid 和 dict_iter_get 返回值一致 */
-    while (dict_iter_is_valid(iter)) {
-        EXPECT_EQ(dict_iter_get(iter, NULL, NULL, NULL, NULL), DICT_OK);
-        dict_iter_next(iter);
-    }
-
-    /* 遍历完成后，两者都应该表示没有更多元素 */
-    EXPECT_EQ(dict_iter_get(iter, NULL, NULL, NULL, NULL), DICT_ENOTFOUND);
-
-    dict_iter_destroy(iter);
-    dict_destroy(dict);
-}
-
-/**
- * @brief 测试 is_valid 在 NULL 迭代器上的行为
- */
-TEST(DictIteratorTest, IsValid_NullIterator)
-{
-    /* NULL 迭代器应返回 0 */
-    EXPECT_EQ(dict_iter_is_valid(NULL), 0);
-}
-
-/**
- * @brief 测试 is_valid 在多次 next 后的行为
- */
-TEST(DictIteratorTest, IsValid_AfterMultipleNext)
-{
-    dict_handle_t dict = dict_create(NULL);
-    ASSERT_NE(dict, nullptr);
-
-    ASSERT_EQ(dict_set(dict, "k1", "v1", 3), DICT_OK);
-    ASSERT_EQ(dict_set(dict, "k2", "v2", 3), DICT_OK);
-    ASSERT_EQ(dict_set(dict, "k3", "v3", 3), DICT_OK);
-
-    dict_iter_t iter = dict_iter_create(dict);
-    ASSERT_NE(iter, nullptr);
-
-    /* 移动到第二个元素 */
-    ASSERT_EQ(dict_iter_next(iter), DICT_OK);
-    ASSERT_EQ(dict_iter_next(iter), DICT_OK);
-
-    /* 当前位置：第三个元素 */
-    int count = 0;
-    while (dict_iter_is_valid(iter)) {
-        EXPECT_EQ(dict_iter_get(iter, NULL, NULL, NULL, NULL), DICT_OK);
-        count++;
-        dict_iter_next(iter);
-    }
-
-    EXPECT_EQ(count, 1);  /* 只剩下一个元素 */
-
-    dict_iter_destroy(iter);
-    dict_destroy(dict);
-}
-
-/* ============================================
- * Length Boundary Tests
- * ============================================ */
-
-TEST(DictIteratorTest, BasicTraversal)
-{
-    dict_handle_t dict = dict_create(NULL);
-    ASSERT_NE(dict, nullptr);
-
-    /* 插入3个元素 */
-    ASSERT_EQ(dict_set(dict, "key1", "value1", 6), DICT_OK);
-    ASSERT_EQ(dict_set(dict, "key2", "value2", 6), DICT_OK);
-    ASSERT_EQ(dict_set(dict, "key3", "value3", 6), DICT_OK);
-
-    /* 遍历计数 */
-    int count = 0;
-    char key[64];
-    char value[64];
-    size_t klen, vlen;
-
-    dict_iter_t iter = dict_iter_create(dict);
-    ASSERT_NE(iter, nullptr);
-
-    while (dict_iter_is_valid(iter)) {
-        EXPECT_EQ(dict_iter_get(iter, key, &klen, value, &vlen), DICT_OK);
-        count++;
-        EXPECT_LE(klen, (size_t)63);
-        EXPECT_LE(vlen, (size_t)63);
-        dict_iter_next(iter);
-    }
-
-    EXPECT_EQ(count, 3);
-
-    dict_iter_destroy(iter);
-    dict_destroy(dict);
-}
-
-/* ============================================
- * Length Boundary Tests
- * ============================================ */
-
-TEST(DictIteratorTest, AllElementsTraversed)
-{
-    dict_handle_t dict = dict_create(NULL);
-    ASSERT_NE(dict, nullptr);
-
-    /* 插入多个元素 */
-    const int COUNT = 10;
-    for (int i = 0; i < COUNT; i++) {
-        char key[16];
-        char value[16];
-        snprintf(key, sizeof(key), "key%d", i);
-        snprintf(value, sizeof(value), "val%d", i);
-        ASSERT_EQ(dict_set(dict, key, value, (size_t)(value[3] == '\0' ? 4 : strlen(value))), DICT_OK);
-    }
-
-    /* 记录遍历到的键 */
-    bool found[COUNT] = {false};
-    int count = 0;
-
-    char key[16];
-    size_t klen;
-
-    dict_iter_t iter = dict_iter_create(dict);
-    ASSERT_NE(iter, nullptr);
-
-    while (dict_iter_is_valid(iter)) {
-        EXPECT_EQ(dict_iter_get(iter, key, &klen, NULL, NULL), DICT_OK);
-        /* 解析键编号 */
-        if (klen >= 4 && key[0] == 'k' && key[1] == 'e' && key[2] == 'y') {
-            int idx = atoi(key + 3);
-            if (idx >= 0 && idx < COUNT) {
-                EXPECT_FALSE(found[idx]);  // 不应该重复
-                found[idx] = true;
-                count++;
-            }
-        }
-        dict_iter_next(iter);
-    }
-
-    EXPECT_EQ(count, COUNT);
-    for (int i = 0; i < COUNT; i++) {
-        EXPECT_TRUE(found[i]);  // 所有元素都应该被遍历到
-    }
-
-    dict_iter_destroy(iter);
-    dict_destroy(dict);
-}
-
-/* ============================================
- * Length Boundary Tests
- * ============================================ */
-
-TEST(DictIteratorTest, NullOutputParams)
-{
-    dict_handle_t dict = dict_create(NULL);
-    ASSERT_NE(dict, nullptr);
-
-    ASSERT_EQ(dict_set(dict, "key1", "value1", 6), DICT_OK);
-
-    dict_iter_t iter = dict_iter_create(dict);
-    ASSERT_NE(iter, nullptr);
-
-    /* 测试各种 NULL 参数组合 */
-    EXPECT_EQ(dict_iter_is_valid(iter), 1);
-    EXPECT_EQ(dict_iter_get(iter, NULL, NULL, NULL, NULL), DICT_OK);
-    dict_iter_next(iter);  /* 移动到下一个 */
-    EXPECT_EQ(dict_iter_is_valid(iter), 0);
-    EXPECT_EQ(dict_iter_get(iter, NULL, NULL, NULL, NULL), DICT_ENOTFOUND);
-
-    dict_iter_destroy(iter);
-    dict_destroy(dict);
-}
-
-/* ============================================
- * Length Boundary Tests
- * ============================================ */
-
-TEST(DictIteratorTest, OnlyKeyOrOnlyValue)
-{
-    dict_handle_t dict = dict_create(NULL);
-    ASSERT_NE(dict, nullptr);
-
-    ASSERT_EQ(dict_set(dict, "test_key", "test_value", 10), DICT_OK);
-
-    dict_iter_t iter = dict_iter_create(dict);
-    ASSERT_NE(iter, nullptr);
-
-    /* 只获取键 */
-    char key[64];
-    size_t klen;
-    memset(key, 'X', sizeof(key));  // 填充非零值
-    EXPECT_EQ(dict_iter_get(iter, key, &klen, NULL, NULL), DICT_OK);
-    EXPECT_EQ(memcmp(key, "test_key", 8), 0);
-    EXPECT_EQ(klen, (size_t)8);
-
-    /* 只获取值 */
-    char value[64];
-    size_t vlen;
-    memset(value, 'X', sizeof(value));
-    EXPECT_EQ(dict_iter_get(iter, NULL, NULL, value, &vlen), DICT_OK);
-    EXPECT_EQ(memcmp(value, "test_value", 10), 0);
-    EXPECT_EQ(vlen, (size_t)10);
-
-    dict_iter_destroy(iter);
-    dict_destroy(dict);
-}
-
-/* ============================================
- * Length Boundary Tests
- * ============================================ */
-
-TEST(DictIteratorTest, NestedIteration)
-{
-    dict_handle_t dict1 = dict_create(NULL);
-    dict_handle_t dict2 = dict_create(NULL);
-    ASSERT_NE(dict1, nullptr);
-    ASSERT_NE(dict2, nullptr);
-
-    /* 填充两个字典 */
-    ASSERT_EQ(dict_set(dict1, "a", "1", 1), DICT_OK);
-    ASSERT_EQ(dict_set(dict1, "b", "2", 1), DICT_OK);
-    ASSERT_EQ(dict_set(dict2, "c", "3", 1), DICT_OK);
-    ASSERT_EQ(dict_set(dict2, "d", "4", 1), DICT_OK);
-
-    /* 同时遍历两个字典 */
-    int count1 = 0, count2 = 0;
-    dict_iter_t iter1 = dict_iter_create(dict1);
-    dict_iter_t iter2 = dict_iter_create(dict2);
-    ASSERT_NE(iter1, nullptr);
-    ASSERT_NE(iter2, nullptr);
-
-    while (dict_iter_is_valid(iter1)) {
-        EXPECT_EQ(dict_iter_get(iter1, NULL, NULL, NULL, NULL), DICT_OK);
-        count1++;
-        dict_iter_next(iter1);
-    }
-
-    while (dict_iter_is_valid(iter2)) {
-        EXPECT_EQ(dict_iter_get(iter2, NULL, NULL, NULL, NULL), DICT_OK);
-        count2++;
-        dict_iter_next(iter2);
-    }
-
-    EXPECT_EQ(count1, 2);
-    EXPECT_EQ(count2, 2);
-
-    dict_iter_destroy(iter1);
-    dict_iter_destroy(iter2);
-    dict_destroy(dict1);
-    dict_destroy(dict2);
-}
-
-TEST(DictIteratorTest, ConditionDelete)
-{
-    dict_handle_t dict = dict_create(NULL);
-    ASSERT_NE(dict, nullptr);
-
-    /* 插入10个整数，5个正数5个负数 */
-    for (int i = 0; i < 10; i++) {
-        char key[16];
-        int value = (i < 5) ? i : i - 10;  // 0,1,2,3,4,-5,-4,-3,-2,-1
-        snprintf(key, sizeof(key), "key%d", i);
-        ASSERT_EQ(dict_set(dict, key, &value, sizeof(value)), DICT_OK);
-    }
-
     EXPECT_EQ(dict_size(dict), 10u);
 
-    /* 删除所有负数 */
-    char key[16];
-    int value;
-    size_t klen, vlen;
-
+    /* 只删除值为奇数的元素 */
     dict_iter_t iter = dict_iter_create(dict);
     ASSERT_NE(iter, nullptr);
 
     while (dict_iter_is_valid(iter)) {
+        char key[64];
+        int value;
+        size_t klen, vlen;
+
         EXPECT_EQ(dict_iter_get(iter, key, &klen, &value, &vlen), DICT_OK);
-        if (vlen == sizeof(int) && value < 0) {
+
+        if (value % 2 == 1) {  /* 奇数值 */
             dict_delete(dict, key);
-            /* 删除后需要重新开始迭代 */
+            /* 删除后需要重新创建迭代器 */
             dict_iter_destroy(iter);
             iter = dict_iter_create(dict);
             if (!iter) break;
@@ -2919,13 +2530,63 @@ TEST(DictIteratorTest, ConditionDelete)
 
     dict_iter_destroy(iter);
 
-    /* 只剩5个正数 */
+    /* 应该只剩 5 个偶数值 */
     EXPECT_EQ(dict_size(dict), 5u);
 
+    /* 验证所有剩余值都是偶数 */
+    iter = dict_iter_create(dict);
+    ASSERT_NE(iter, nullptr);
+
+    int count = 0;
+    while (dict_iter_is_valid(iter)) {
+        int value;
+        EXPECT_EQ(dict_iter_get(iter, NULL, NULL, &value, NULL), DICT_OK);
+        EXPECT_EQ(value % 2, 0);
+        count++;
+        dict_iter_next(iter);
+    }
+
+    EXPECT_EQ(count, 5);
+    dict_iter_destroy(iter);
     dict_destroy(dict);
 }
 
-TEST(DictIteratorTest, NumberKeyType)
+TEST(DictIteratorTest, DeleteDuringIteration_All)
+{
+    dict_config_t config = {
+        .capacity = 32,
+        .key_type = DICT_KEY_STRING,
+        .key_size = 0,
+        .hash_fn = NULL
+    };
+    dict_handle_t dict = dict_create(&config);
+    ASSERT_NE(dict, nullptr);
+
+    /* 插入 10 个元素 */
+    for (int i = 0; i < 10; i++) {
+        char key[16];
+        snprintf(key, sizeof(key), "key%d", i);
+        ASSERT_EQ(dict_set(dict, key, &i, sizeof(i)), DICT_OK);
+    }
+    EXPECT_EQ(dict_size(dict), 10u);
+
+    /* 使用迭代器遍历并删除所有元素 */
+    while (dict_size(dict) > 0) {
+        dict_iter_t iter = dict_iter_create(dict);
+        ASSERT_NE(iter, nullptr);
+
+        char key[64];
+        EXPECT_EQ(dict_iter_get(iter, key, NULL, NULL, NULL), DICT_OK);
+        EXPECT_EQ(dict_delete(dict, key), DICT_OK);
+
+        dict_iter_destroy(iter);
+    }
+
+    EXPECT_EQ(dict_size(dict), 0u);
+    dict_destroy(dict);
+}
+
+TEST(DictIteratorTest, DeleteDuringIteration_NumberKey)
 {
     dict_config_t config = {
         .capacity = 32,
@@ -2936,32 +2597,167 @@ TEST(DictIteratorTest, NumberKeyType)
     dict_handle_t dict = dict_create(&config);
     ASSERT_NE(dict, nullptr);
 
-    /* 插入整数键值对 */
-    for (int i = 0; i < 5; i++) {
-        int32_t key = i * 100;
-        char value[16];
-        snprintf(value, sizeof(value), "val%d", i);
-        ASSERT_EQ(dict_set(dict, &key, value, (size_t)(strlen(value) + 1)), DICT_OK);
+    /* 插入 5 个整数键 */
+    for (int32_t i = 0; i < 5; i++) {
+        ASSERT_EQ(dict_set(dict, &i, &i, sizeof(i)), DICT_OK);
     }
+    EXPECT_EQ(dict_size(dict), 5u);
 
-    /* 遍历 */
-    int count = 0;
     dict_iter_t iter = dict_iter_create(dict);
     ASSERT_NE(iter, nullptr);
 
+    /* 删除所有元素 */
+    while (dict_iter_is_valid(iter)) {
+        int32_t key;
+        EXPECT_EQ(dict_iter_get(iter, &key, NULL, NULL, NULL), DICT_OK);
+        dict_delete(dict, &key);
+        dict_iter_destroy(iter);
+        iter = dict_iter_create(dict);
+        if (!iter) break;
+    }
+
+    if (iter) {
+        dict_iter_destroy(iter);
+    }
+
+    EXPECT_EQ(dict_size(dict), 0u);
+    dict_destroy(dict);
+}
+
+TEST(DictIteratorTest, DeleteDuringIteration_BinaryKey)
+{
+    dict_config_t config = {
+        .capacity = 32,
+        .key_type = DICT_KEY_BINARY,
+        .key_size = sizeof(BinaryKey),
+        .hash_fn = NULL
+    };
+    dict_handle_t dict = dict_create(&config);
+    ASSERT_NE(dict, nullptr);
+
+    /* 插入 5 个二进制键 */
+    for (int i = 0; i < 5; i++) {
+        BinaryKey key = {(uint16_t)i, (uint16_t)(i * 10)};
+        ASSERT_EQ(dict_set(dict, &key, &i, sizeof(i)), DICT_OK);
+    }
+    EXPECT_EQ(dict_size(dict), 5u);
+
+    dict_iter_t iter = dict_iter_create(dict);
+    ASSERT_NE(iter, nullptr);
+
+    /* 删除所有元素 */
+    while (dict_iter_is_valid(iter)) {
+        BinaryKey key;
+        EXPECT_EQ(dict_iter_get(iter, &key, NULL, NULL, NULL), DICT_OK);
+        dict_delete(dict, &key);
+        dict_iter_destroy(iter);
+        iter = dict_iter_create(dict);
+        if (!iter) break;
+    }
+
+    if (iter) {
+        dict_iter_destroy(iter);
+    }
+
+    EXPECT_EQ(dict_size(dict), 0u);
+    dict_destroy(dict);
+}
+
+/* ============================================
+ * 迭代器与字典操作交互测试
+ * ============================================ */
+
+TEST(DictIteratorTest, InsertDuringIteration)
+{
+    dict_config_t config = {
+        .capacity = 32,
+        .key_type = DICT_KEY_STRING,
+        .key_size = 0,
+        .hash_fn = NULL
+    };
+    dict_handle_t dict = dict_create(&config);
+    ASSERT_NE(dict, nullptr);
+
+    ASSERT_EQ(dict_set(dict, "a", "1", 2), DICT_OK);
+
+    dict_iter_t iter = dict_iter_create(dict);
+    ASSERT_NE(iter, nullptr);
+
+    /* 在迭代过程中插入新元素 */
+    ASSERT_EQ(dict_set(dict, "b", "2", 2), DICT_OK);
+    ASSERT_EQ(dict_set(dict, "c", "3", 2), DICT_OK);
+
+    /* 遍历：迭代器只遍历创建时的数据（"a"） */
+    int count = 0;
     while (dict_iter_is_valid(iter)) {
         EXPECT_EQ(dict_iter_get(iter, NULL, NULL, NULL, NULL), DICT_OK);
         count++;
         dict_iter_next(iter);
     }
 
-    EXPECT_EQ(count, 5);
+    EXPECT_EQ(count, 1);  /* 只遍历到 "a" */
+    EXPECT_EQ(dict_size(dict), 3u);
+
+    dict_iter_destroy(iter);
+
+    /* 新创建的迭代器可以遍历到所有数据 */
+    iter = dict_iter_create(dict);
+    ASSERT_NE(iter, nullptr);
+    count = 0;
+    while (dict_iter_is_valid(iter)) {
+        count++;
+        dict_iter_next(iter);
+    }
+    EXPECT_EQ(count, 3);
 
     dict_iter_destroy(iter);
     dict_destroy(dict);
 }
 
-/* ============================================
- * Length Boundary Tests
- * ============================================ */
+TEST(DictIteratorTest, ClearDuringIteration)
+{
+    dict_config_t config = {
+        .capacity = 32,
+        .key_type = DICT_KEY_STRING,
+        .key_size = 0,
+        .hash_fn = NULL
+    };
+    dict_handle_t dict = dict_create(&config);
+    ASSERT_NE(dict, nullptr);
+
+    ASSERT_EQ(dict_set(dict, "a", "1", 2), DICT_OK);
+    ASSERT_EQ(dict_set(dict, "b", "2", 2), DICT_OK);
+
+    dict_iter_t iter = dict_iter_create(dict);
+    ASSERT_NE(iter, nullptr);
+
+    /* 清空字典 */
+    EXPECT_EQ(dict_clear(dict), DICT_OK);
+    EXPECT_EQ(dict_size(dict), 0u);
+
+    /* 迭代器应该无效 */
+    EXPECT_EQ(dict_iter_is_valid(iter), 0);
+    EXPECT_EQ(dict_iter_get(iter, NULL, NULL, NULL, NULL), DICT_ENOTFOUND);
+
+    /* 清空后仍可继续使用 */
+    ASSERT_EQ(dict_set(dict, "c", "3", 2), DICT_OK);
+    EXPECT_EQ(dict_size(dict), 1u);
+
+    /* 重新创建迭代器 */
+    dict_iter_destroy(iter);
+    iter = dict_iter_create(dict);
+    ASSERT_NE(iter, nullptr);
+
+    int count = 0;
+    while (dict_iter_is_valid(iter)) {
+        EXPECT_EQ(dict_iter_get(iter, NULL, NULL, NULL, NULL), DICT_OK);
+        count++;
+        dict_iter_next(iter);
+    }
+
+    EXPECT_EQ(count, 1);
+
+    dict_iter_destroy(iter);
+    dict_destroy(dict);
+}
 

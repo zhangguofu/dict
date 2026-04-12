@@ -98,20 +98,20 @@ size_t dict_get_key_len(const dict_t *d, const void *key)
 
 uint32_t dict_do_hash(const dict_t *d, const void *key)
 {
-    /* Prefer custom hash function */
-    if (d->hash_fn) {
+    if (NULL == d->hash_fn) {
+        // use built-in hash function
+        switch (d->key_type) {
+            case DICT_KEY_STRING:
+                return murmur3_32(key, DICT_STRLEN((const char *)key));
+            case DICT_KEY_NUMBER:
+                return dict_number_hash(key, d->key_size);
+            case DICT_KEY_BINARY:
+            default:
+                return murmur3_32(key, d->key_size);
+        }
+    } else {
+        // use custom hash function
         return d->hash_fn(key, dict_get_key_len(d, key));
-    }
-
-    /* Otherwise use default hash */
-    switch (d->key_type) {
-        case DICT_KEY_STRING:
-            return murmur3_32(key, DICT_STRLEN((const char *)key));
-        case DICT_KEY_NUMBER:
-            return dict_number_hash(key, d->key_size);
-        case DICT_KEY_BINARY:
-        default:
-            return murmur3_32(key, d->key_size);
     }
 }
 
@@ -271,21 +271,19 @@ static dict_t *dict_create_internal(const dict_config_t *config, size_t capacity
         d->buckets[i] = NULL;
     }
 
+    d->key_type = config->key_type;
+    d->key_size = config->key_size;
+    d->hash_fn = config->hash_fn;
     d->capacity = capacity;
     d->size = 0;
     d->threshold = (size_t)(capacity * DICT_LOAD_FACTOR);
 
-    /* Initialize key type config from config */
-    if (config) {
-        d->key_type = config->key_type;
-        d->key_size = config->key_size;
-        d->hash_fn = config->hash_fn;
-    } else {
-        /* Default config */
-        d->key_type = DICT_KEY_STRING;
-        d->key_size = 0;
-        d->hash_fn = NULL;
-    }
+    /* Initialize iterator support fields */
+    d->iter_head = NULL;
+    d->iter_count = 0;
+    d->new_buckets = NULL;
+    d->new_capacity = 0;
+    d->is_migrating = 0;
 
     return d;
 }
@@ -296,31 +294,29 @@ static dict_t *dict_create_internal(const dict_config_t *config, size_t capacity
 
 dict_handle_t dict_create(const dict_config_t *config)
 {
-    size_t capacity;
+    if (NULL == config) {
+        return NULL;
+    }
 
-    /* Parameter validation */
-    if (config) {
-        /* Validate key_type */
-        if (config->key_type < DICT_KEY_STRING || config->key_type > DICT_KEY_BINARY) {
-            return NULL;
-        }
-        /* NUMBER/BINARY must specify key_size */
-        if (config->key_type != DICT_KEY_STRING && config->key_size == 0) {
-            return NULL;
-        }
-        /* Check key_size limit for NUMBER/BINARY types */
-        if (config->key_type != DICT_KEY_STRING && config->key_size > DICT_MAX_LENGTH) {
-            return NULL;
-        }
-        /* Get capacity */
-        if (config->capacity > 0) {
-            capacity = config->capacity;
-        } else {
-            capacity = DICT_DEFAULT_CAPACITY;
-        }
-    } else {
-        /* Default config */
-        capacity = DICT_DEFAULT_CAPACITY;
+    /* Validate key_type */
+    if (config->key_type < DICT_KEY_STRING || config->key_type > DICT_KEY_BINARY) {
+        return NULL;
+    }
+
+    /* NUMBER/BINARY must specify key_size */
+    if (config->key_type != DICT_KEY_STRING && config->key_size == 0) {
+        return NULL;
+    }
+
+    /* Check key_size limit for NUMBER/BINARY types */
+    if (config->key_type != DICT_KEY_STRING && config->key_size > DICT_MAX_LENGTH) {
+        return NULL;
+    }
+
+    /* Get capacity */
+    size_t capacity = DICT_DEFAULT_CAPACITY;
+    if (config->capacity > 0) {
+        capacity = config->capacity;
     }
 
     /* Ensure capacity is power of 2 */
@@ -353,18 +349,24 @@ int dict_destroy(dict_handle_t handle)
         }
     }
 
+    /* Free all active iterators */
+    while (d->iter_head != NULL) {
+        dict_iter_impl_t *iter = d->iter_head;
+        d->iter_head = iter->next;
+        DICT_FREE(iter);
+    }
+
     /* Free bucket array */
     DICT_FREE(d->buckets);
 
     /* Free dictionary structure */
     DICT_FREE(d);
-
     return DICT_OK;
 }
 
 int dict_set(dict_handle_t handle, const void *key, const void *value, size_t value_len)
 {
-    if (!handle || !key) {
+    if (NULL == handle || NULL == key) {
         return DICT_EINVALID;
     }
 
@@ -387,44 +389,41 @@ int dict_set(dict_handle_t handle, const void *key, const void *value, size_t va
                 DICT_MEMCPY(value_ptr, value, value_len);
             }
         } else {
-            /* Different size, need to rebuild node */
-            dict_node_t **bucket_ptr;
-            uint32_t old_hash = DICT_HASH(d, key);
-            size_t old_idx = old_hash & (d->capacity - 1);
-
-            /* Remove from old linked list */
-            bucket_ptr = &d->buckets[old_idx];
-            while (*bucket_ptr != node) {
-                bucket_ptr = &(*bucket_ptr)->next;
-            }
-            *bucket_ptr = node->next;
-
-            /* Free old node */
-            dict_node_destroy(node);
-
-            /* Create new node and insert at head of linked list */
-            node = dict_node_create(d, key, value, value_len);
-            if (!node) {
+            /* Different size create new node first */
+            dict_node_t *new_node = dict_node_create(d, key, value, value_len);
+            if (NULL == new_node) {
                 return DICT_ENOMEM;
             }
 
-            node->next = d->buckets[old_idx];
-            d->buckets[old_idx] = node;
+            uint32_t hash = DICT_HASH(d, key);
+            size_t index = hash & (d->capacity - 1);
+
+            /* Remove from linked list */
+            dict_node_t **bucket_ptr = &d->buckets[index];
+            while (*bucket_ptr != node) {
+                bucket_ptr = &(*bucket_ptr)->next;
+            }
+            // Do remove
+            new_node->next = node->next;
+            *bucket_ptr = new_node;
+
+            /* Free old node */
+            dict_node_destroy(node);
         }
     } else {
         /* Key does not exist: create new node */
-        node = dict_node_create(d, key, value, value_len);
-        if (!node) {
+        dict_node_t *new_node = dict_node_create(d, key, value, value_len);
+        if (NULL == new_node) {
             return DICT_ENOMEM;
         }
 
         /* Calculate bucket index */
         uint32_t hash = DICT_HASH(d, key);
-        size_t idx = hash & (d->capacity - 1);
+        size_t index = hash & (d->capacity - 1);
 
         /* Insert at head of linked list */
-        node->next = d->buckets[idx];
-        d->buckets[idx] = node;
+        new_node->next = d->buckets[index];
+        d->buckets[index] = new_node;
 
         /* Update size */
         d->size++;
@@ -446,7 +445,7 @@ int dict_get(dict_handle_t handle, const void *key, void *value_out, size_t buf_
     dict_t *d;
     dict_node_t *node;
 
-    if (!handle || !key) {
+    if (NULL == handle || NULL == key || NULL == value_out) {
         return DICT_EINVALID;
     }
 
@@ -461,11 +460,6 @@ int dict_get(dict_handle_t handle, const void *key, void *value_out, size_t buf_
     /* Check buffer size */
     if (buf_len < node->value_len) {
         return DICT_ETOOSMALL;
-    }
-
-    /* Check output buffer */
-    if (!value_out) {
-        return DICT_EINVALID;
     }
 
     /* Copy value data */
@@ -501,7 +495,7 @@ int dict_get_size(dict_handle_t handle, const void *key, size_t *size_out)
 
 int dict_delete(dict_handle_t handle, const void *key)
 {
-    if (!handle || !key) {
+    if (NULL == handle || NULL == key) {
         return DICT_EINVALID;
     }
 
@@ -526,6 +520,14 @@ int dict_delete(dict_handle_t handle, const void *key)
             /* Update size */
             d->size--;
 
+            /* Invalidate all active iterators */
+            for (dict_iter_impl_t *it = d->iter_head; it != NULL; it = it->next) {
+                if (it->node == node) {
+                    it->node = NULL;
+                    it->bucket_idx = 0;
+                }
+            }
+
             return DICT_OK;
         }
         prev_ptr = &node->next;
@@ -537,7 +539,7 @@ int dict_delete(dict_handle_t handle, const void *key)
 
 size_t dict_size(dict_handle_t handle)
 {
-    if (!handle) {
+    if (NULL == handle) {
         return 0;
     }
     return ((dict_t *)handle)->size;
@@ -545,7 +547,7 @@ size_t dict_size(dict_handle_t handle)
 
 int dict_clear(dict_handle_t handle)
 {
-    if (!handle) {
+    if (NULL == handle) {
         return DICT_EINVALID;
     }
 
@@ -565,12 +567,18 @@ int dict_clear(dict_handle_t handle)
     /* Reset size */
     d->size = 0;
 
+    /* Invalidate all active iterators */
+    for (dict_iter_impl_t *it = d->iter_head; it != NULL; it = it->next) {
+        it->node = NULL;
+        it->bucket_idx = 0;
+    }
+
     return DICT_OK;
 }
 
 int dict_shrink(dict_handle_t handle)
 {
-    if (!handle) {
+    if (NULL == handle) {
         return DICT_EINVALID;
     }
 
@@ -605,19 +613,17 @@ int dict_shrink(dict_handle_t handle)
 
 int dict_exists(dict_handle_t handle, const void *key)
 {
-    dict_t *d;
-
-    if (!handle || !key) {
+    if (NULL == handle || NULL == key) {
         return 0;
     }
 
-    d = (dict_t *)handle;
+    dict_t *d = (dict_t *)handle;
     return dict_find_node(d, key) != NULL;
 }
 
 size_t dict_capacity(dict_handle_t handle)
 {
-    if (!handle) {
+    if (NULL == handle) {
         return 0;
     }
     return ((dict_t *)handle)->capacity;
@@ -629,7 +635,7 @@ size_t dict_capacity(dict_handle_t handle)
 
 dict_iter_t dict_iter_create(dict_handle_t handle)
 {
-    if (!handle) {
+    if (NULL == handle) {
         return NULL;
     }
 
@@ -637,7 +643,7 @@ dict_iter_t dict_iter_create(dict_handle_t handle)
 
     /* Allocate iterator */
     dict_iter_impl_t *iter = (dict_iter_impl_t *)DICT_MALLOC(sizeof(dict_iter_impl_t));
-    if (!iter) {
+    if (NULL == iter) {
         return NULL;
     }
 
@@ -654,6 +660,15 @@ dict_iter_t dict_iter_create(dict_handle_t handle)
         }
     }
 
+    /* Register iterator to active list */
+    iter->prev = NULL;
+    iter->next = d->iter_head;
+    if (d->iter_head) {
+        d->iter_head->prev = iter;
+    }
+    d->iter_head = iter;
+    d->iter_count++;
+
     return (dict_iter_t)iter;
 }
 
@@ -661,29 +676,29 @@ int dict_iter_get(dict_iter_t iter,
                   void *key_out, size_t *klen_out,
                   void *value_out, size_t *vlen_out)
 {
-    dict_iter_impl_t *it;
-    dict_node_t *node;
-
-    if (!iter) {
+    if (NULL == iter) {
         return DICT_EINVALID;
     }
 
-    it = (dict_iter_impl_t *)iter;
+    dict_iter_impl_t *it = (dict_iter_impl_t *)iter;
 
     /* Current position invalid, traversal complete */
     if (!it->node) {
         return DICT_ENOTFOUND;
     }
 
-    node = (dict_node_t *)it->node;
+    dict_node_t *node = (dict_node_t *)it->node;
 
     /* Copy key data */
-    if (key_out && klen_out) {
+    if (key_out) {
         DICT_MEMCPY(key_out, DICT_NODE_RAW_KEY(node), node->key_len);
         /* STRING type needs '\0' terminator */
         if (it->dict->key_type == DICT_KEY_STRING) {
             ((char *)key_out)[node->key_len] = '\0';
         }
+    }
+
+    if (klen_out) {
         *klen_out = node->key_len;
     }
 
@@ -700,7 +715,7 @@ int dict_iter_get(dict_iter_t iter,
 
 int dict_iter_is_valid(dict_iter_t iter)
 {
-    if (!iter) {
+    if (NULL == iter) {
         return 0;
     }
 
@@ -712,14 +727,14 @@ int dict_iter_is_valid(dict_iter_t iter)
 
 int dict_iter_next(dict_iter_t iter)
 {
-    if (!iter) {
+    if (NULL == iter) {
         return DICT_EINVALID;
     }
 
     dict_iter_impl_t *it = (dict_iter_impl_t *)iter;
 
     /* Current position invalid, return directly */
-    if (!it->node) {
+    if (NULL == it->node) {
         return DICT_ENOTFOUND;
     }
 
@@ -747,9 +762,24 @@ int dict_iter_next(dict_iter_t iter)
 
 int dict_iter_destroy(dict_iter_t iter)
 {
-    if (!iter) {
+    if (NULL == iter) {
         return DICT_EINVALID;
     }
+
+    dict_iter_impl_t *it = (dict_iter_impl_t *)iter;
+    dict_t *d = it->dict;
+
+    /* Unregister from active list */
+    if (it->prev) {
+        it->prev->next = it->next;
+    } else {
+        d->iter_head = it->next;
+    }
+    if (it->next) {
+        it->next->prev = it->prev;
+    }
+    d->iter_count--;
+
     DICT_FREE(iter);
     return DICT_OK;
 }
