@@ -350,10 +350,6 @@ static dict_t *dict_create_internal(const dict_config_t *config, size_t capacity
     d->size = 0;
     d->threshold = (size_t)(capacity * DICT_LOAD_FACTOR);
 
-    /* Initialize iterator support fields */
-    d->iter_head = NULL;
-    d->iter_count = 0;
-
     return d;
 }
 
@@ -416,18 +412,6 @@ int dict_destroy(dict_handle_t handle)
             dict_node_destroy(node);
             node = next;
         }
-    }
-
-    /* Free all active iterators with their snapshots */
-    while (d->iter_head != NULL) {
-        dict_iter_impl_t *iter = d->iter_head;
-        d->iter_head = iter->next;
-
-        /* Free snapshot resources first */
-        dict_iter_snapshot_free(iter->snap_buckets, iter->snap_capacity);
-
-        /* Then free iterator structure */
-        DICT_FREE(iter);
     }
 
     /* Free bucket array */
@@ -713,7 +697,6 @@ dict_iter_t dict_iter_create(dict_handle_t handle)
         return NULL;
     }
 
-    iter->dict = d;
     iter->key_type = d->key_type;  /* Cache key_type for use after dict_destroy */
     iter->bucket_idx = 0;
     iter->node = NULL;
@@ -768,15 +751,6 @@ dict_iter_t dict_iter_create(dict_handle_t handle)
             break;
         }
     }
-
-    /* Register iterator to active list */
-    iter->prev = NULL;
-    iter->next = d->iter_head;
-    if (d->iter_head) {
-        d->iter_head->prev = iter;
-    }
-    d->iter_head = iter;
-    d->iter_count++;
 
     return (dict_iter_t)iter;
 }
@@ -876,18 +850,6 @@ int dict_iter_destroy(dict_iter_t iter)
     }
 
     dict_iter_impl_t *it = (dict_iter_impl_t *)iter;
-    dict_t *d = it->dict;
-
-    /* Unregister from active list */
-    if (it->prev) {
-        it->prev->next = it->next;
-    } else {
-        d->iter_head = it->next;
-    }
-    if (it->next) {
-        it->next->prev = it->prev;
-    }
-    d->iter_count--;
 
     /* Free snapshot resources */
     dict_iter_snapshot_free(it->snap_buckets, it->snap_capacity);

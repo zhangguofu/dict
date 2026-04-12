@@ -3005,7 +3005,7 @@ TEST(DictIteratorBoundaryTest, IsValidAfterVariousOperations)
 
 TEST(DictIteratorBoundaryTest, NextAfterDestroyed)
 {
-    /* 测试：字典销毁后迭代器的 next 行为 */
+    /* 测试：字典销毁后迭代器仍可使用（快照自治） */
     dict_config_t config = {
         .capacity = 32,
         .key_type = DICT_KEY_STRING,
@@ -3015,14 +3015,40 @@ TEST(DictIteratorBoundaryTest, NextAfterDestroyed)
     dict_handle_t dict = dict_create(&config);
     ASSERT_NE(dict, nullptr);
 
-    ASSERT_EQ(dict_set(dict, "a", "1", 2), DICT_OK);
-    ASSERT_EQ(dict_set(dict, "b", "2", 2), DICT_OK);
+    /* 只插入一个元素，简化调试 */
+    ASSERT_EQ(dict_set(dict, "x", "99", 3), DICT_OK);
+    ASSERT_EQ(dict_size(dict), 1u);
 
     dict_iter_t iter = dict_iter_create(dict);
     ASSERT_NE(iter, nullptr);
 
-    /* 销毁字典 - 迭代器快照被清理 */
+    /* 验证迭代器能正常工作 */
+    EXPECT_EQ(dict_iter_is_valid(iter), 1);
+    char key[32] = {0}, value[32] = {0};
+    size_t vlen = 0;
+    EXPECT_EQ(dict_iter_get(iter, key, NULL, value, &vlen), DICT_OK);
+    printf("Before destroy - key: '%s', value: '%s', vlen: %zu\n", key, value, vlen);
+    EXPECT_STREQ(key, "x");
+    EXPECT_STREQ(value, "99");
+
+    /* 字典销毁后，迭代器快照仍可使用 */
     dict_destroy(dict);
+
+    /* 继续遍历快照 */
+    EXPECT_EQ(dict_iter_is_valid(iter), 1);
+    memset(key, 0, sizeof(key));
+    memset(value, 0, sizeof(value));
+    EXPECT_EQ(dict_iter_get(iter, key, NULL, value, &vlen), DICT_OK);
+    printf("After destroy - key: '%s', value: '%s', vlen: %zu\n", key, value, vlen);
+    EXPECT_STREQ(key, "x");
+    EXPECT_STREQ(value, "99");
+
+    /* 遍历结束 */
+    EXPECT_EQ(dict_iter_next(iter), DICT_ENOTFOUND);
+    EXPECT_EQ(dict_iter_is_valid(iter), 0);
+
+    /* 迭代器销毁 */
+    dict_iter_destroy(iter);
 }
 
 TEST(DictIteratorBoundaryTest, TraverseToEndAndRestart)

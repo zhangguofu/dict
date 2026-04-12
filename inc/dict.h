@@ -255,7 +255,7 @@ int dict_iter_next(dict_iter_t iter);
  * @param iter Iterator handle
  * @return Returns DICT_OK (0) on success, error code (<0) otherwise
  *
- * @note Must destroy all associated iterators before destroying dictionary
+ * @note Iterator holds an independent snapshot, destruction order is independent of dict
  */
 int dict_iter_destroy(dict_iter_t iter);
 

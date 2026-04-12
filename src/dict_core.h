@@ -58,8 +58,6 @@ typedef struct {
     dict_key_type_t key_type; /* Key type */
     size_t key_size;          /* Key length for NUMBER/BINARY */
     dict_hash_fn_t hash_fn;   /* Custom hash function, NULL uses default */
-    dict_iter_impl_t *iter_head;  /* Head of active iterator list */
-    int iter_count;               /* Active iterator count */
 } dict_t;
 
 /* Node size calculation macro
@@ -88,14 +86,11 @@ typedef struct {
  * The snapshot is isolated from subsequent dictionary operations (insert/delete/clear).
  */
 struct dict_iter_impl {
-    dict_t *dict;            /* Associated dictionary (weak reference) */
     dict_key_type_t key_type;  /* Key type (cached for use after dict_destroy) */
     size_t bucket_idx;       /* Current bucket index (relative to snap_buckets) */
     void *node;              /* Current node pointer (points to snapshot node) */
     dict_node_t **snap_buckets;  /* Snapshot bucket array (independently allocated) */
     size_t snap_capacity;         /* Snapshot capacity at creation time */
-    dict_iter_impl_t *prev;  /* Previous iterator in active list */
-    dict_iter_impl_t *next;  /* Next iterator in active list */
 };
 
 /* ============================================
