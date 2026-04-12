@@ -2716,6 +2716,9 @@ TEST(DictIteratorTest, InsertDuringIteration)
 
 TEST(DictIteratorTest, ClearDuringIteration)
 {
+    /* 测试：快照策略下，dict_clear 后迭代器仍然有效
+     * 因为迭代器持有独立的数据快照，不受字典修改影响
+     */
     dict_config_t config = {
         .capacity = 32,
         .key_type = DICT_KEY_STRING,
@@ -2735,29 +2738,480 @@ TEST(DictIteratorTest, ClearDuringIteration)
     EXPECT_EQ(dict_clear(dict), DICT_OK);
     EXPECT_EQ(dict_size(dict), 0u);
 
-    /* 迭代器应该无效 */
-    EXPECT_EQ(dict_iter_is_valid(iter), 0);
-    EXPECT_EQ(dict_iter_get(iter, NULL, NULL, NULL, NULL), DICT_ENOTFOUND);
+    /* 迭代器仍然有效（快照中有原始数据） */
+    EXPECT_EQ(dict_iter_is_valid(iter), 1);
 
-    /* 清空后仍可继续使用 */
-    ASSERT_EQ(dict_set(dict, "c", "3", 2), DICT_OK);
-    EXPECT_EQ(dict_size(dict), 1u);
-
-    /* 重新创建迭代器 */
-    dict_iter_destroy(iter);
-    iter = dict_iter_create(dict);
-    ASSERT_NE(iter, nullptr);
-
+    /* 迭代器应能遍历出全部 2 个元素（包括已清空的数据） */
     int count = 0;
     while (dict_iter_is_valid(iter)) {
         EXPECT_EQ(dict_iter_get(iter, NULL, NULL, NULL, NULL), DICT_OK);
         count++;
         dict_iter_next(iter);
     }
+    EXPECT_EQ(count, 2);
 
-    EXPECT_EQ(count, 1);
+    /* 清空后仍可继续使用 */
+    ASSERT_EQ(dict_set(dict, "c", "3", 2), DICT_OK);
+    EXPECT_EQ(dict_size(dict), 1u);
+
+    /* 旧迭代器只能看到快照中的数据（"a", "b"），看不到新插入的 "c" */
+    dict_iter_destroy(iter);
+    iter = dict_iter_create(dict);
+    ASSERT_NE(iter, nullptr);
+
+    count = 0;
+    while (dict_iter_is_valid(iter)) {
+        count++;
+        dict_iter_next(iter);
+    }
+    EXPECT_EQ(count, 1);  /* 只有 "c" */
 
     dict_iter_destroy(iter);
     dict_destroy(dict);
 }
 
+
+/* ============================================
+ * 迭代器边界行为测试
+ * ============================================ */
+
+TEST(DictIteratorBoundaryTest, NextAfterCompleteTraversal)
+{
+    /* 测试：遍历完所有元素后，next 返回 DICT_ENOTFOUND
+     * 使用 while 循环确保遍历完整
+     */
+    dict_config_t config = {
+        .capacity = 32,
+        .key_type = DICT_KEY_STRING,
+        .key_size = 0,
+        .hash_fn = NULL
+    };
+    dict_handle_t dict = dict_create(&config);
+    ASSERT_NE(dict, nullptr);
+
+    ASSERT_EQ(dict_set(dict, "a", "1", 2), DICT_OK);
+    ASSERT_EQ(dict_set(dict, "b", "2", 2), DICT_OK);
+    ASSERT_EQ(dict_set(dict, "c", "3", 2), DICT_OK);
+
+    dict_iter_t iter = dict_iter_create(dict);
+    ASSERT_NE(iter, nullptr);
+
+    /* 初始位置在第一个元素 */
+    EXPECT_EQ(dict_iter_is_valid(iter), 1);
+
+    /* 使用 while 循环遍历所有元素 */
+    int count = 0;
+    while (dict_iter_is_valid(iter)) {
+        EXPECT_EQ(dict_iter_get(iter, NULL, NULL, NULL, NULL), DICT_OK);
+        count++;
+        int ret = dict_iter_next(iter);
+        /* next 可能返回 OK（有下一个元素）或 ENOTFOUND（遍历完成） */
+        if (ret == DICT_ENOTFOUND) {
+            break;
+        }
+    }
+    EXPECT_EQ(count, 3);
+
+    /* 遍历完成后，is_valid 应为 0 */
+    EXPECT_EQ(dict_iter_is_valid(iter), 0);
+
+    /* 再次调用 next 返回 ENOTFOUND */
+    EXPECT_EQ(dict_iter_next(iter), DICT_ENOTFOUND);
+
+    dict_iter_destroy(iter);
+    dict_destroy(dict);
+}
+
+TEST(DictIteratorBoundaryTest, NextOnSingleElement)
+{
+    /* 测试：单元素字典，遍历后的 next 行为
+     * 迭代器初始在第一个元素，next 一次后就结束
+     */
+    dict_config_t config = {
+        .capacity = 32,
+        .key_type = DICT_KEY_STRING,
+        .key_size = 0,
+        .hash_fn = NULL
+    };
+    dict_handle_t dict = dict_create(&config);
+    ASSERT_NE(dict, nullptr);
+
+    ASSERT_EQ(dict_set(dict, "only", "value", 5), DICT_OK);
+
+    dict_iter_t iter = dict_iter_create(dict);
+    ASSERT_NE(iter, nullptr);
+
+    /* 初始在第一个（也是最后一个）元素 */
+    EXPECT_EQ(dict_iter_is_valid(iter), 1);
+
+    /* next 一次后没有更多元素 */
+    EXPECT_EQ(dict_iter_next(iter), DICT_ENOTFOUND);
+    EXPECT_EQ(dict_iter_is_valid(iter), 0);
+
+    /* 再次调用仍然返回 ENOTFOUND */
+    EXPECT_EQ(dict_iter_next(iter), DICT_ENOTFOUND);
+
+    dict_iter_destroy(iter);
+    dict_destroy(dict);
+}
+
+TEST(DictIteratorBoundaryTest, GetWithPartialOutput)
+{
+    /* 测试：dict_iter_get 部分参数为 NULL 的场景 */
+    dict_config_t config = {
+        .capacity = 32,
+        .key_type = DICT_KEY_STRING,
+        .key_size = 0,
+        .hash_fn = NULL
+    };
+    dict_handle_t dict = dict_create(&config);
+    ASSERT_NE(dict, nullptr);
+
+    ASSERT_EQ(dict_set(dict, "key", "hello", 6), DICT_OK);
+
+    dict_iter_t iter = dict_iter_create(dict);
+    ASSERT_NE(iter, nullptr);
+
+    /* 只获取 klen */
+    size_t klen = 999;
+    EXPECT_EQ(dict_iter_get(iter, NULL, &klen, NULL, NULL), DICT_OK);
+    EXPECT_EQ(klen, 3u);
+
+    /* 只获取 vlen */
+    size_t vlen = 999;
+    EXPECT_EQ(dict_iter_get(iter, NULL, NULL, NULL, &vlen), DICT_OK);
+    EXPECT_EQ(vlen, 6u);
+
+    /* 同时获取 klen 和 vlen */
+    klen = 0;
+    vlen = 0;
+    EXPECT_EQ(dict_iter_get(iter, NULL, &klen, NULL, &vlen), DICT_OK);
+    EXPECT_EQ(klen, 3u);
+    EXPECT_EQ(vlen, 6u);
+
+    dict_iter_destroy(iter);
+    dict_destroy(dict);
+}
+
+TEST(DictIteratorBoundaryTest, GetWithPartialOutput_NumberKey)
+{
+    /* 测试：NUMBER 类型键，部分参数为 NULL */
+    dict_config_t config = {
+        .capacity = 32,
+        .key_type = DICT_KEY_NUMBER,
+        .key_size = sizeof(int32_t),
+        .hash_fn = NULL
+    };
+    dict_handle_t dict = dict_create(&config);
+    ASSERT_NE(dict, nullptr);
+
+    int32_t key = 12345;
+    int value = 999;
+    ASSERT_EQ(dict_set(dict, &key, &value, sizeof(value)), DICT_OK);
+
+    dict_iter_t iter = dict_iter_create(dict);
+    ASSERT_NE(iter, nullptr);
+
+    /* 只获取 klen */
+    size_t klen = 999;
+    EXPECT_EQ(dict_iter_get(iter, NULL, &klen, NULL, NULL), DICT_OK);
+    EXPECT_EQ(klen, sizeof(int32_t));
+
+    /* 只获取 vlen */
+    size_t vlen = 999;
+    EXPECT_EQ(dict_iter_get(iter, NULL, NULL, NULL, &vlen), DICT_OK);
+    EXPECT_EQ(vlen, sizeof(int));
+
+    dict_iter_destroy(iter);
+    dict_destroy(dict);
+}
+
+TEST(DictIteratorBoundaryTest, GetWithPartialOutput_BinaryKey)
+{
+    /* 测试：BINARY 类型键，部分参数为 NULL */
+    dict_config_t config = {
+        .capacity = 32,
+        .key_type = DICT_KEY_BINARY,
+        .key_size = sizeof(BinaryKey),
+        .hash_fn = NULL
+    };
+    dict_handle_t dict = dict_create(&config);
+    ASSERT_NE(dict, nullptr);
+
+    BinaryKey key = {100, 200};
+    int value = 888;
+    ASSERT_EQ(dict_set(dict, &key, &value, sizeof(value)), DICT_OK);
+
+    dict_iter_t iter = dict_iter_create(dict);
+    ASSERT_NE(iter, nullptr);
+
+    /* 只获取 klen */
+    size_t klen = 0;
+    EXPECT_EQ(dict_iter_get(iter, NULL, &klen, NULL, NULL), DICT_OK);
+    EXPECT_EQ(klen, sizeof(BinaryKey));
+
+    /* 只获取 vlen */
+    size_t vlen = 0;
+    EXPECT_EQ(dict_iter_get(iter, NULL, NULL, NULL, &vlen), DICT_OK);
+    EXPECT_EQ(vlen, sizeof(int));
+
+    dict_iter_destroy(iter);
+    dict_destroy(dict);
+}
+
+TEST(DictIteratorBoundaryTest, IsValidAfterVariousOperations)
+{
+    /* 测试：is_valid 在各种操作后的状态 */
+    dict_config_t config = {
+        .capacity = 32,
+        .key_type = DICT_KEY_STRING,
+        .key_size = 0,
+        .hash_fn = NULL
+    };
+    dict_handle_t dict = dict_create(&config);
+    ASSERT_NE(dict, nullptr);
+
+    dict_iter_t iter = dict_iter_create(dict);
+    ASSERT_NE(iter, nullptr);
+
+    /* 空字典：无效 */
+    EXPECT_EQ(dict_iter_is_valid(iter), 0);
+
+    /* 插入数据 */
+    ASSERT_EQ(dict_set(dict, "a", "1", 2), DICT_OK);
+
+    /* 旧迭代器仍然无效（快照是空的） */
+    EXPECT_EQ(dict_iter_is_valid(iter), 0);
+
+    /* 重新创建迭代器 */
+    dict_iter_destroy(iter);
+    iter = dict_iter_create(dict);
+    ASSERT_NE(iter, nullptr);
+
+    /* 新迭代器有效（单元素） */
+    EXPECT_EQ(dict_iter_is_valid(iter), 1);
+
+    /* 单元素：next 一次后无效 */
+    EXPECT_EQ(dict_iter_next(iter), DICT_ENOTFOUND);
+    EXPECT_EQ(dict_iter_is_valid(iter), 0);
+
+    /* 再调用 next 后仍然无效 */
+    EXPECT_EQ(dict_iter_next(iter), DICT_ENOTFOUND);
+    EXPECT_EQ(dict_iter_is_valid(iter), 0);
+
+    dict_iter_destroy(iter);
+    dict_destroy(dict);
+}
+
+TEST(DictIteratorBoundaryTest, NextAfterDestroyed)
+{
+    /* 测试：字典销毁后迭代器的 next 行为 */
+    dict_config_t config = {
+        .capacity = 32,
+        .key_type = DICT_KEY_STRING,
+        .key_size = 0,
+        .hash_fn = NULL
+    };
+    dict_handle_t dict = dict_create(&config);
+    ASSERT_NE(dict, nullptr);
+
+    ASSERT_EQ(dict_set(dict, "a", "1", 2), DICT_OK);
+    ASSERT_EQ(dict_set(dict, "b", "2", 2), DICT_OK);
+
+    dict_iter_t iter = dict_iter_create(dict);
+    ASSERT_NE(iter, nullptr);
+
+    /* 销毁字典 - 迭代器快照被清理 */
+    dict_destroy(dict);
+}
+
+TEST(DictIteratorBoundaryTest, TraverseToEndAndRestart)
+{
+    /* 测试：遍历到结尾后，重新创建迭代器 */
+    dict_config_t config = {
+        .capacity = 32,
+        .key_type = DICT_KEY_STRING,
+        .key_size = 0,
+        .hash_fn = NULL
+    };
+    dict_handle_t dict = dict_create(&config);
+    ASSERT_NE(dict, nullptr);
+
+    ASSERT_EQ(dict_set(dict, "a", "1", 2), DICT_OK);
+    ASSERT_EQ(dict_set(dict, "b", "2", 2), DICT_OK);
+    ASSERT_EQ(dict_set(dict, "c", "3", 2), DICT_OK);
+
+    dict_iter_t iter = dict_iter_create(dict);
+    ASSERT_NE(iter, nullptr);
+
+    /* 遍历到结尾 */
+    while (dict_iter_is_valid(iter)) {
+        dict_iter_next(iter);
+    }
+
+    EXPECT_EQ(dict_iter_is_valid(iter), 0);
+    EXPECT_EQ(dict_iter_next(iter), DICT_ENOTFOUND);
+
+    /* 重新创建迭代器 */
+    dict_iter_destroy(iter);
+    iter = dict_iter_create(dict);
+    ASSERT_NE(iter, nullptr);
+
+    EXPECT_EQ(dict_iter_is_valid(iter), 1);
+
+    int count = 0;
+    while (dict_iter_is_valid(iter)) {
+        count++;
+        dict_iter_next(iter);
+    }
+    EXPECT_EQ(count, 3);
+
+    dict_iter_destroy(iter);
+    dict_destroy(dict);
+}
+
+TEST(DictIteratorBoundaryTest, GetAfterTraverseComplete)
+{
+    /* 测试：遍历完成后调用 get 的行为
+     * 单元素时，初始位置在第一个元素，next 一次后结束
+     */
+    dict_config_t config = {
+        .capacity = 32,
+        .key_type = DICT_KEY_STRING,
+        .key_size = 0,
+        .hash_fn = NULL
+    };
+    dict_handle_t dict = dict_create(&config);
+    ASSERT_NE(dict, nullptr);
+
+    ASSERT_EQ(dict_set(dict, "key", "value", 5), DICT_OK);
+
+    dict_iter_t iter = dict_iter_create(dict);
+    ASSERT_NE(iter, nullptr);
+
+    /* 初始在第一个元素，可以获取数据 */
+    char key_buf[64], val_buf[64];
+    size_t klen, vlen;
+    EXPECT_EQ(dict_iter_get(iter, key_buf, &klen, val_buf, &vlen), DICT_OK);
+    EXPECT_EQ(klen, 3u);
+    EXPECT_EQ(vlen, 5u);
+
+    /* 单元素：next 一次后结束 */
+    EXPECT_EQ(dict_iter_next(iter), DICT_ENOTFOUND);
+    EXPECT_EQ(dict_iter_is_valid(iter), 0);
+
+    /* 遍历完成后调用 get 应该返回 ENOTFOUND */
+    EXPECT_EQ(dict_iter_get(iter, key_buf, &klen, val_buf, &vlen), DICT_ENOTFOUND);
+
+    /* 再次调用仍然返回 ENOTFOUND */
+    EXPECT_EQ(dict_iter_get(iter, NULL, NULL, NULL, NULL), DICT_ENOTFOUND);
+
+    dict_iter_destroy(iter);
+    dict_destroy(dict);
+}
+
+TEST(DictIteratorBoundaryTest, MultipleIteratorsTraverseComplete)
+{
+    /* 测试：多个迭代器各自独立遍历完成 */
+    dict_config_t config = {
+        .capacity = 32,
+        .key_type = DICT_KEY_STRING,
+        .key_size = 0,
+        .hash_fn = NULL
+    };
+    dict_handle_t dict = dict_create(&config);
+    ASSERT_NE(dict, nullptr);
+
+    for (int i = 0; i < 5; i++) {
+        char key[8], val[8];
+        snprintf(key, sizeof(key), "k%d", i);
+        snprintf(val, sizeof(val), "v%d", i);
+        ASSERT_EQ(dict_set(dict, key, val, strlen(val) + 1), DICT_OK);
+    }
+
+    dict_iter_t iter1 = dict_iter_create(dict);
+    dict_iter_t iter2 = dict_iter_create(dict);
+    dict_iter_t iter3 = dict_iter_create(dict);
+    ASSERT_NE(iter1, nullptr);
+    ASSERT_NE(iter2, nullptr);
+    ASSERT_NE(iter3, nullptr);
+
+    /* iter1 完整遍历 */
+    int count1 = 0;
+    while (dict_iter_is_valid(iter1)) {
+        count1++;
+        dict_iter_next(iter1);
+    }
+    EXPECT_EQ(count1, 5);
+
+    /* iter2 只走一步 */
+    EXPECT_EQ(dict_iter_next(iter2), DICT_OK);
+    EXPECT_EQ(dict_iter_is_valid(iter2), 1);
+
+    /* iter3 保持不动 */
+    EXPECT_EQ(dict_iter_is_valid(iter3), 1);
+
+    /* iter1 再次遍历应返回 ENOTFOUND */
+    EXPECT_EQ(dict_iter_next(iter1), DICT_ENOTFOUND);
+
+    dict_destroy(dict);
+}
+
+TEST(DictIteratorBoundaryTest, NextOnEmptyDictIterator)
+{
+    /* 测试：空字典迭代器调用 next */
+    dict_config_t config = {
+        .capacity = 32,
+        .key_type = DICT_KEY_STRING,
+        .key_size = 0,
+        .hash_fn = NULL
+    };
+    dict_handle_t dict = dict_create(&config);
+    ASSERT_NE(dict, nullptr);
+
+    dict_iter_t iter = dict_iter_create(dict);
+    ASSERT_NE(iter, nullptr);
+
+    EXPECT_EQ(dict_iter_is_valid(iter), 0);
+    EXPECT_EQ(dict_iter_next(iter), DICT_ENOTFOUND);
+    EXPECT_EQ(dict_iter_next(iter), DICT_ENOTFOUND);
+
+    dict_iter_destroy(iter);
+    dict_destroy(dict);
+}
+
+TEST(DictIteratorBoundaryTest, IsValidFalseThenNext)
+{
+    /* 测试：is_valid 返回 false 后 next 的行为
+     * 单元素时，next 一次后就变为无效状态
+     */
+    dict_config_t config = {
+        .capacity = 32,
+        .key_type = DICT_KEY_STRING,
+        .key_size = 0,
+        .hash_fn = NULL
+    };
+    dict_handle_t dict = dict_create(&config);
+    ASSERT_NE(dict, nullptr);
+
+    ASSERT_EQ(dict_set(dict, "only", "value", 5), DICT_OK);
+
+    dict_iter_t iter = dict_iter_create(dict);
+    ASSERT_NE(iter, nullptr);
+
+    /* 单元素：初始有效，next 一次后无效 */
+    EXPECT_EQ(dict_iter_is_valid(iter), 1);
+    EXPECT_EQ(dict_iter_next(iter), DICT_ENOTFOUND);
+    EXPECT_EQ(dict_iter_is_valid(iter), 0);
+
+    /* is_valid 为 false 后多次 next 仍然返回 ENOTFOUND */
+    EXPECT_EQ(dict_iter_next(iter), DICT_ENOTFOUND);
+    EXPECT_EQ(dict_iter_next(iter), DICT_ENOTFOUND);
+    EXPECT_EQ(dict_iter_next(iter), DICT_ENOTFOUND);
+
+    /* is_valid 始终为 false */
+    EXPECT_EQ(dict_iter_is_valid(iter), 0);
+
+    dict_iter_destroy(iter);
+    dict_destroy(dict);
+}

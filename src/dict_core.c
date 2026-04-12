@@ -80,6 +80,21 @@ static dict_node_t *dict_find_node(dict_t *d, const void *key);
  */
 static int dict_resize_to(dict_t *d, size_t new_capacity);
 
+/**
+ * @brief Clone a node (deep copy)
+ * @param d Dictionary (for key_type info)
+ * @param src Source node to clone
+ * @return New cloned node, or NULL if allocation failed
+ */
+static dict_node_t *dict_node_clone(const dict_t *d, const dict_node_t *src);
+
+/**
+ * @brief Free all nodes and bucket array in a snapshot
+ * @param snap_buckets Snapshot bucket array
+ * @param snap_capacity Snapshot capacity
+ */
+static void dict_iter_snapshot_free(dict_node_t **snap_buckets, size_t snap_capacity);
+
 /* ============================================
  * Internal Helper Function Implementation
  * ============================================ */
@@ -170,6 +185,63 @@ static void dict_node_destroy(dict_node_t *node)
     if (node) {
         DICT_FREE(node);
     }
+}
+
+static dict_node_t *dict_node_clone(const dict_t *d, const dict_node_t *src)
+{
+    if (!src) {
+        return NULL;
+    }
+
+    size_t total_size = DICT_NODE_SIZE(src->key_len, src->value_len);
+
+    /* Allocate new node */
+    dict_node_t *node = (dict_node_t *)DICT_MALLOC(total_size);
+    if (!node) {
+        return NULL;
+    }
+
+    /* Copy node properties */
+    node->next = NULL;  /* Will be set by caller */
+    node->key_len = src->key_len;
+    node->value_len = src->value_len;
+
+    /* Copy key data */
+    void *ptr = DICT_NODE_KEY(node);
+    DICT_MEMCPY(ptr, src->data, src->key_len);
+
+    /* STRING type needs '\0' terminator */
+    if (d->key_type == DICT_KEY_STRING) {
+        ((char *)ptr)[src->key_len] = '\0';
+    }
+
+    /* Copy value data */
+    if (src->value_len > 0) {
+        void *value_ptr = DICT_NODE_VALUE(node);
+        DICT_MEMCPY(value_ptr, DICT_NODE_VALUE(src), src->value_len);
+    }
+
+    return node;
+}
+
+static void dict_iter_snapshot_free(dict_node_t **snap_buckets, size_t snap_capacity)
+{
+    if (!snap_buckets) {
+        return;
+    }
+
+    /* Free all nodes in each bucket's linked list */
+    for (size_t i = 0; i < snap_capacity; i++) {
+        dict_node_t *node = snap_buckets[i];
+        while (node) {
+            dict_node_t *next = node->next;
+            dict_node_destroy(node);
+            node = next;
+        }
+    }
+
+    /* Free bucket array itself */
+    DICT_FREE(snap_buckets);
 }
 
 static dict_node_t *dict_find_node(dict_t *d, const void *key)
@@ -281,9 +353,6 @@ static dict_t *dict_create_internal(const dict_config_t *config, size_t capacity
     /* Initialize iterator support fields */
     d->iter_head = NULL;
     d->iter_count = 0;
-    d->new_buckets = NULL;
-    d->new_capacity = 0;
-    d->is_migrating = 0;
 
     return d;
 }
@@ -339,7 +408,7 @@ int dict_destroy(dict_handle_t handle)
 
     dict_t *d = (dict_t *)handle;
 
-    /* Free all nodes */
+    /* Free all nodes in dictionary */
     for (size_t i = 0; i < d->capacity; i++) {
         dict_node_t *node = d->buckets[i];
         while (node) {
@@ -349,10 +418,15 @@ int dict_destroy(dict_handle_t handle)
         }
     }
 
-    /* Free all active iterators */
+    /* Free all active iterators with their snapshots */
     while (d->iter_head != NULL) {
         dict_iter_impl_t *iter = d->iter_head;
         d->iter_head = iter->next;
+
+        /* Free snapshot resources first */
+        dict_iter_snapshot_free(iter->snap_buckets, iter->snap_capacity);
+
+        /* Then free iterator structure */
         DICT_FREE(iter);
     }
 
@@ -520,13 +594,8 @@ int dict_delete(dict_handle_t handle, const void *key)
             /* Update size */
             d->size--;
 
-            /* Invalidate all active iterators */
-            for (dict_iter_impl_t *it = d->iter_head; it != NULL; it = it->next) {
-                if (it->node == node) {
-                    it->node = NULL;
-                    it->bucket_idx = 0;
-                }
-            }
+            /* Note: In snapshot strategy, iterator invalidation is NOT needed.
+             * Iterators hold independent snapshots and are unaffected by dict modifications. */
 
             return DICT_OK;
         }
@@ -567,11 +636,8 @@ int dict_clear(dict_handle_t handle)
     /* Reset size */
     d->size = 0;
 
-    /* Invalidate all active iterators */
-    for (dict_iter_impl_t *it = d->iter_head; it != NULL; it = it->next) {
-        it->node = NULL;
-        it->bucket_idx = 0;
-    }
+    /* Note: In snapshot strategy, iterator invalidation is NOT needed.
+     * Iterators hold independent snapshots and are unaffected by dict modifications. */
 
     return DICT_OK;
 }
@@ -648,14 +714,57 @@ dict_iter_t dict_iter_create(dict_handle_t handle)
     }
 
     iter->dict = d;
+    iter->key_type = d->key_type;  /* Cache key_type for use after dict_destroy */
     iter->bucket_idx = 0;
     iter->node = NULL;
+    iter->snap_buckets = NULL;
+    iter->snap_capacity = d->capacity;
 
-    /* Position at first non-empty bucket */
+    /* Allocate snapshot bucket array */
+    iter->snap_buckets = (dict_node_t **)DICT_MALLOC(d->capacity * sizeof(dict_node_t *));
+    if (NULL == iter->snap_buckets) {
+        DICT_FREE(iter);
+        return NULL;
+    }
+
+    /* Initialize snapshot bucket array to NULL */
     for (size_t i = 0; i < d->capacity; i++) {
-        if (d->buckets[i] != NULL) {
+        iter->snap_buckets[i] = NULL;
+    }
+
+    /* Deep copy all nodes from dictionary to snapshot */
+    for (size_t i = 0; i < d->capacity; i++) {
+        dict_node_t *src_node = d->buckets[i];
+        dict_node_t *prev_clone = NULL;
+
+        while (src_node) {
+            /* Clone current node */
+            dict_node_t *clone_node = dict_node_clone(d, src_node);
+            if (NULL == clone_node) {
+                /* Allocation failed, free partially constructed snapshot */
+                dict_iter_snapshot_free(iter->snap_buckets, d->capacity);
+                DICT_FREE(iter);
+                return NULL;
+            }
+
+            /* Link to previous cloned node in this bucket's list */
+            if (prev_clone) {
+                prev_clone->next = clone_node;
+            } else {
+                /* First node in this bucket */
+                iter->snap_buckets[i] = clone_node;
+            }
+            prev_clone = clone_node;
+
+            src_node = src_node->next;
+        }
+    }
+
+    /* Position at first non-empty bucket in snapshot */
+    for (size_t i = 0; i < iter->snap_capacity; i++) {
+        if (iter->snap_buckets[i] != NULL) {
             iter->bucket_idx = i;
-            iter->node = d->buckets[i];
+            iter->node = iter->snap_buckets[i];
             break;
         }
     }
@@ -693,7 +802,7 @@ int dict_iter_get(dict_iter_t iter,
     if (key_out) {
         DICT_MEMCPY(key_out, DICT_NODE_RAW_KEY(node), node->key_len);
         /* STRING type needs '\0' terminator */
-        if (it->dict->key_type == DICT_KEY_STRING) {
+        if (it->key_type == DICT_KEY_STRING) {
             ((char *)key_out)[node->key_len] = '\0';
         }
     }
@@ -746,11 +855,11 @@ int dict_iter_next(dict_iter_t iter)
         return DICT_OK;
     }
 
-    /* Current bucket linked list finished, find next non-empty bucket */
-    for (size_t i = it->bucket_idx + 1; i < it->dict->capacity; i++) {
-        if (it->dict->buckets[i] != NULL) {
+    /* Current bucket linked list finished, find next non-empty bucket in snapshot */
+    for (size_t i = it->bucket_idx + 1; i < it->snap_capacity; i++) {
+        if (it->snap_buckets[i] != NULL) {
             it->bucket_idx = i;
-            it->node = it->dict->buckets[i];
+            it->node = it->snap_buckets[i];
             return DICT_OK;
         }
     }
@@ -779,6 +888,9 @@ int dict_iter_destroy(dict_iter_t iter)
         it->next->prev = it->prev;
     }
     d->iter_count--;
+
+    /* Free snapshot resources */
+    dict_iter_snapshot_free(it->snap_buckets, it->snap_capacity);
 
     DICT_FREE(iter);
     return DICT_OK;
