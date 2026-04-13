@@ -146,10 +146,17 @@ scons -c && scons
 
 ## 5. RT-Thread 集成
 
-本模块可作为 RT-Thread 软件包使用。集成到 RT-Thread 项目时：
+dict 软件包位于 RT-Thread 软件包仓库的 **tools** 分类下。
 
-1. 在 RT-Thread Studio 或使用 `menuconfig` 启用 `dict` 软件包
-2. 软件包会自动编译，无需额外配置
+```bash
+# 使用 env 工具进入 menuconfig
+menuconfig
+```
+
+导航到：
+```
+RT-Thread online packages → tools packages → dict: A general-purpose dictionary module
+```
 
 ## 6. 使用示例（斐波那契数列）
 
