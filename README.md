@@ -93,7 +93,8 @@ char key[64];
 char value[256];
 size_t klen, vlen;
 
-while (dict_iter_get(iter, key, &klen, value, &vlen) == DICT_OK) {
+while (dict_iter_is_valid(iter)) {
+    dict_iter_get(iter, key, &klen, value, &vlen);
     printf("%s = %s\n", key, value);
     dict_iter_next(iter);
 }
